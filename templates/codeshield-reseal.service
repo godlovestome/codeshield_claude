@@ -1,0 +1,10 @@
+[Unit]
+Description=CODE SHIELD V3 — Monthly credential re-seal
+Documentation=https://github.com/godlovestome/codeshield_claude
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/codeshield-secrets-reseal --seal-existing
+StandardOutput=append:/var/log/openclaw-codeshield/reseal.log
+StandardError=append:/var/log/openclaw-codeshield/reseal.log

@@ -11,7 +11,7 @@ set -euo pipefail
 ###############################################################################
 # Constants
 ###############################################################################
-readonly CS_VERSION="3.0.1"
+readonly CS_VERSION="3.0.2"
 readonly CS_CONF_DIR="/etc/openclaw-codeshield"
 readonly CS_LIB_DIR="/usr/local/lib/openclaw-codeshield"
 readonly CS_SBIN_DIR="/usr/local/sbin"
@@ -130,6 +130,11 @@ SCRIPTS=(
     scripts/openclaw-cost-monitor
     scripts/openclaw-guardian
     scripts/emergency-lockdown
+    scripts/squid-injection-guard.py
+    scripts/codeshield-secrets-seal
+    scripts/codeshield-secrets-unseal
+    scripts/codeshield-secrets-reseal
+    scripts/codeshield-secrets-migrate
 )
 
 for s in "${SCRIPTS[@]}"; do
@@ -142,6 +147,9 @@ TEMPLATES=(
     templates/squid.conf
     templates/soul-injection.md
     templates/skills-policy.json
+    templates/codeshield-secrets.service
+    templates/codeshield-reseal.service
+    templates/codeshield-reseal.timer
 )
 
 for t in "${TEMPLATES[@]}"; do
@@ -177,29 +185,87 @@ run_stage() {
     source "$CS_LIB_DIR/$script"
 }
 
-TOTAL=6
-START=0
+TOTAL=7
 
 if [ "$UPDATE_MODE" -eq 1 ]; then
     info "Update mode: skipping interactive stages, re-applying protection."
     run_stage 2 "$TOTAL" "Isolation & secrets migration" "02-isolation.sh"
     run_stage 4 "$TOTAL" "System hardening"             "04-hardening.sh"
     run_stage 5 "$TOTAL" "Injection defense"            "05-injection-defense.sh"
-    run_stage 6 "$TOTAL" "Guardian service"             "06-guardian.sh"
+    run_stage 6 "$TOTAL" "Secrets encryption"           "INLINE_SECRETS_ENCRYPT"
+    run_stage 7 "$TOTAL" "Guardian service"             "06-guardian.sh"
 else
     if [ "$SKIP_PREFLIGHT" -eq 0 ]; then
         run_stage 1 "$TOTAL" "Environment pre-flight"       "00-preflight.sh"
     else
         warn "Skipping pre-flight checks."
-        START=1
     fi
     run_stage 2 "$TOTAL" "Collect secrets (interactive)" "01-collect-secrets.sh"
     run_stage 3 "$TOTAL" "Isolation & secrets migration"  "02-isolation.sh"
     run_stage 4 "$TOTAL" "Qdrant authentication"          "03-qdrant.sh"
     run_stage 5 "$TOTAL" "System hardening"               "04-hardening.sh"
-    run_stage 6 "$TOTAL" "Injection defense + Guardian"   "05-injection-defense.sh"
-    # Guardian is always last
+    run_stage 6 "$TOTAL" "Injection defense"              "05-injection-defense.sh"
+    # Guardian is always last (before secrets encryption)
     source "$CS_LIB_DIR/06-guardian.sh"
+fi
+
+###############################################################################
+# Stage 7: Secrets Encryption (V3.0.2)
+###############################################################################
+stage "7/$TOTAL" "Secrets encryption (systemd-creds)"
+
+setup_secrets_encryption() {
+    # Install secrets management scripts
+    for tool in codeshield-secrets-seal codeshield-secrets-unseal codeshield-secrets-reseal codeshield-secrets-migrate; do
+        cp "$CS_LIB_DIR/$tool" "$CS_SBIN_DIR/$tool"
+        chmod 0755 "$CS_SBIN_DIR/$tool"
+    done
+    ok "Secrets management scripts installed."
+
+    # Deploy codeshield-secrets.service
+    cp "$CS_LIB_DIR/codeshield-secrets.service" /etc/systemd/system/codeshield-secrets.service
+    ok "codeshield-secrets.service deployed."
+
+    # Deploy reseal timer
+    cp "$CS_LIB_DIR/codeshield-reseal.service" /etc/systemd/system/codeshield-reseal.service
+    cp "$CS_LIB_DIR/codeshield-reseal.timer" /etc/systemd/system/codeshield-reseal.timer
+    ok "Monthly credential reseal timer deployed."
+
+    # Check if systemd-creds is available
+    if ! command -v systemd-creds &>/dev/null; then
+        warn "systemd-creds not available (requires systemd 250+). Secrets will remain plaintext."
+        return
+    fi
+
+    # Ensure host key exists
+    if [ ! -f /var/lib/systemd/credential.secret ]; then
+        info "Generating systemd host credential key ..."
+        systemd-creds setup 2>/dev/null || true
+    fi
+
+    # Run migration if plaintext secrets exist and encrypted don't
+    if [ -f "$CS_CONF_DIR/secrets.env" ] && [ ! -f "$CS_CONF_DIR/secrets.env.enc" ]; then
+        info "Encrypting secrets at rest ..."
+        codeshield-secrets-migrate
+    elif [ -f "$CS_CONF_DIR/secrets.env.enc" ]; then
+        ok "Secrets already encrypted at rest."
+        # Ensure service is running
+        systemctl daemon-reload
+        systemctl enable codeshield-secrets.service --now 2>/dev/null || true
+    else
+        warn "No secrets file found. Encryption will be applied after secret collection."
+    fi
+
+    # Enable reseal timer
+    systemctl daemon-reload
+    systemctl enable codeshield-reseal.timer --now 2>/dev/null || true
+    ok "Monthly reseal timer enabled."
+}
+
+if [ "$DRY_RUN" -eq 0 ]; then
+    setup_secrets_encryption
+else
+    info "[DRY-RUN] Would set up secrets encryption."
 fi
 
 ###############################################################################

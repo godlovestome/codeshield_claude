@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CODE SHIELD V3 -- 36-Item Security Audit
+# CODE SHIELD V3 -- Security Audit
 # Usage: security-audit.sh [--quiet]
 set -uo pipefail
 
@@ -68,7 +68,7 @@ check_maybe() {
 if [ "$QUIET" -eq 0 ]; then
     printf "\n${BOLD}${CYAN}"
     printf " CODE SHIELD V3 -- Security Audit\n"
-    printf " Running %s checks ...\n" "36"
+    printf " Running %s checks ...\n" "54"
     printf "${RESET}\n"
 fi
 
@@ -108,7 +108,7 @@ check "dns direct query blocked" \
     "iptables -S OUTPUT 2>/dev/null | grep -qE 'uid-owner.*(997|openclaw-svc).*dport 53.*DROP' || iptables -S OUTPUT 2>/dev/null | grep -qE '! -d 127.0.0.0/8.*uid-owner.*(997|openclaw-svc).*DROP'"
 
 ###############################################################################
-# ACCESS CONTROL (8)
+# ACCESS CONTROL (11)
 ###############################################################################
 [ "$QUIET" -eq 0 ] && printf "${BOLD}${DIM} --- Access Control ---${RESET}\n"
 
@@ -131,7 +131,16 @@ check "controlled sudoers present" \
     "test -f /etc/sudoers.d/openclaw-codeshield"
 
 check "secrets file permissions" \
-    "stat -c '%a' $CS_CONF_DIR/secrets.env 2>/dev/null | grep -q '600'"
+    "stat -c '%a' $CS_CONF_DIR/secrets.env.enc 2>/dev/null | grep -q '600' || stat -c '%a' $CS_CONF_DIR/secrets.env 2>/dev/null | grep -q '600'"
+
+check "secrets encrypted at rest" \
+    "test -f $CS_CONF_DIR/secrets.env.enc && ! test -f $CS_CONF_DIR/secrets.env"
+
+check "secrets decrypted to tmpfs" \
+    "test -f /run/openclaw-codeshield/secrets.env && df /run/openclaw-codeshield 2>/dev/null | grep -q tmpfs"
+
+check "codeshield-secrets service active" \
+    "systemctl is-active codeshield-secrets.service"
 
 check "no inline secrets in openclaw.json" \
     "! jq -r '.telegramBotToken // empty' $OPENCLAW_HOME/.openclaw/openclaw.json 2>/dev/null | grep -qE '.{10,}'"
@@ -145,7 +154,7 @@ check "qdrant unauth rejected" \
     "! curl -sf http://127.0.0.1:6333/collections 2>/dev/null | grep -q 'result'"
 
 check "qdrant auth accepted" \
-    'QKEY=$(grep "^QDRANT_API_KEY=" /etc/openclaw-codeshield/secrets.env 2>/dev/null | cut -d= -f2-); [ -n "$QKEY" ] && curl -sf -H "api-key: $QKEY" http://127.0.0.1:6333/collections 2>/dev/null | grep -q "result"'
+    'QKEY=$(grep "^QDRANT_API_KEY=" /run/openclaw-codeshield/secrets.env 2>/dev/null | cut -d= -f2- || grep "^QDRANT_API_KEY=" /etc/openclaw-codeshield/secrets.env 2>/dev/null | cut -d= -f2-); [ -n "$QKEY" ] && curl -sf -H "api-key: $QKEY" http://127.0.0.1:6333/collections 2>/dev/null | grep -q "result"'
 
 ###############################################################################
 # OUTBOUND PROXY (4)
@@ -239,6 +248,38 @@ check "no inline gateway token" \
     "! python3 -c \"import json,sys; cfg=json.load(open('/home/openclaw/.openclaw/openclaw.json')); sys.exit(0 if cfg.get('gateway',{}).get('auth',{}).get('token') else 1)\" 2>/dev/null"
 
 ###############################################################################
+# V3.0.2 SECURITY FIXES (9)
+###############################################################################
+[ "$QUIET" -eq 0 ] && printf "${BOLD}${DIM} --- V3.0.2 Security Fixes ---${RESET}\n"
+
+check "ssh forwarding disabled" \
+    "sshd -T 2>/dev/null | grep -i '^allowtcpforwarding ' | grep -qi 'no'"
+
+check "ssh agent forwarding disabled" \
+    "sshd -T 2>/dev/null | grep -i '^allowagentforwarding ' | grep -qi 'no'"
+
+check "ssh max sessions limited" \
+    "sshd -T 2>/dev/null | grep -i '^maxsessions ' | awk '{exit (\$2 <= 3) ? 0 : 1}'"
+
+check "fs.suid_dumpable disabled" \
+    "test \"\$(sysctl -n fs.suid_dumpable 2>/dev/null)\" = '0'"
+
+check "docker icc disabled" \
+    "jq -e '.icc == false' /etc/docker/daemon.json 2>/dev/null"
+
+check "iptables outbound logging" \
+    "iptables -S OUTPUT 2>/dev/null | grep -q 'CODESHIELD-BLOCK'"
+
+check "reseal timer active" \
+    "systemctl is-active codeshield-reseal.timer 2>/dev/null || systemctl is-enabled codeshield-reseal.timer 2>/dev/null | grep -qE 'enabled|static'"
+
+check "systemd restrict address families" \
+    "systemctl show openclaw.service -p RestrictAddressFamilies 2>/dev/null | grep -q 'AF_INET'"
+
+check "systemd syscall filter" \
+    "systemctl show openclaw.service -p SystemCallFilter 2>/dev/null | grep -qE 'SystemCallFilter=.{10,}'"
+
+###############################################################################
 # CONTINUOUS MONITORING (2)
 ###############################################################################
 [ "$QUIET" -eq 0 ] && printf "${BOLD}${DIM} --- Continuous Monitoring ---${RESET}\n"
@@ -264,23 +305,22 @@ check "watcher active" \
 # Score Calculation
 ###############################################################################
 if [ "$TOTAL" -gt 0 ]; then
-    # base=7.0 + (pass/total)*2.0 + bonus
-    # bonus: all critical pass +0.2, guardian active +0.1, etc.
     PASS_RATIO=$(awk "BEGIN {printf \"%.4f\", $PASS / $TOTAL}")
     BASE_SCORE=$(awk "BEGIN {printf \"%.1f\", 7.0 + $PASS_RATIO * 2.0}")
 
     BONUS="0.0"
-    # Bonus: secrets externalized
     if [ "$FAIL" -eq 0 ]; then
         BONUS="0.2"
     fi
-    # Bonus: guardian active
     if systemctl is-active codeshield-guardian.path &>/dev/null 2>&1; then
         BONUS=$(awk "BEGIN {printf \"%.1f\", $BONUS + 0.1}")
     fi
-    # Bonus: all network checks pass
     if ufw status 2>/dev/null | grep -q "Status: active" && \
-       grep -qE '^\s*PasswordAuthentication\s+no' /etc/ssh/sshd_config 2>/dev/null; then
+       sshd -T 2>/dev/null | grep -i '^passwordauthentication ' | grep -qi 'no'; then
+        BONUS=$(awk "BEGIN {printf \"%.1f\", $BONUS + 0.1}")
+    fi
+    # V3.0.2: Bonus for encrypted secrets
+    if test -f "$CS_CONF_DIR/secrets.env.enc" && ! test -f "$CS_CONF_DIR/secrets.env"; then
         BONUS=$(awk "BEGIN {printf \"%.1f\", $BONUS + 0.1}")
     fi
 

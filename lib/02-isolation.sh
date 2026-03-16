@@ -201,4 +201,23 @@ SUDOERS_EOF
     ok "Controlled sudoers installed: $SUDOERS_FILE"
 fi
 
+###############################################################################
+# 7. Encrypt secrets at rest (systemd-creds)
+###############################################################################
+if [ "$DRY_RUN" -eq 0 ]; then
+    if [ -f "$SECRETS_FILE" ] && command -v systemd-creds &>/dev/null; then
+        # Ensure host credential key exists
+        if [ ! -f /var/lib/systemd/credential.secret ]; then
+            systemd-creds setup 2>/dev/null || true
+        fi
+        if [ -f /var/lib/systemd/credential.secret ]; then
+            info "Encrypting secrets at rest with systemd-creds ..."
+            codeshield-secrets-seal --from "$SECRETS_FILE"
+            ok "Secrets encrypted. Plaintext removed from disk."
+        else
+            warn "systemd host key not available. Secrets remain plaintext."
+        fi
+    fi
+fi
+
 ok "User isolation and secret migration complete."

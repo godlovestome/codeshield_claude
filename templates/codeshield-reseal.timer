@@ -1,0 +1,11 @@
+[Unit]
+Description=CODE SHIELD V3 — Monthly credential re-seal timer
+
+[Timer]
+# Re-seal on the 1st of each month at 03:00
+OnCalendar=*-*-01 03:00:00
+Persistent=true
+RandomizedDelaySec=1h
+
+[Install]
+WantedBy=timers.target

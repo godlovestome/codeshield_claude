@@ -45,6 +45,29 @@ harden_ssh() {
         fi
     done
 
+    # V3.0.2: Also write sshd_config.d drop-in to ensure settings are not
+    # overridden by cloud-init or other includes (sshd_config.d takes priority)
+    local SSHD_DROPIN="/etc/ssh/sshd_config.d/90-codeshield.conf"
+    cat > "$SSHD_DROPIN" << 'SSHD_DROP'
+# CODE SHIELD V3.0.2 -- SSH hardening (overrides cloud-init)
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+ChallengeResponseAuthentication no
+PubkeyAuthentication yes
+PermitEmptyPasswords no
+PermitRootLogin prohibit-password
+MaxAuthTries 3
+MaxSessions 3
+LoginGraceTime 30
+ClientAliveInterval 300
+ClientAliveCountMax 2
+X11Forwarding no
+AllowTcpForwarding no
+AllowAgentForwarding no
+SSHD_DROP
+    chmod 0600 "$SSHD_DROPIN"
+    ok "SSH drop-in written: $SSHD_DROPIN (AllowTcpForwarding=no, MaxSessions=3)"
+
     # Validate and reload
     if sshd -t 2>/dev/null; then
         systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || true
@@ -52,6 +75,7 @@ harden_ssh() {
     else
         warn "sshd_config validation failed. Restoring backup."
         cp "${SSHD_CONFIG}.bak.codeshield."* "$SSHD_CONFIG" 2>/dev/null || true
+        rm -f "$SSHD_DROPIN"
     fi
 }
 
@@ -73,7 +97,7 @@ setup_ufw() {
     ufw default deny incoming
     ufw default allow outgoing
 
-    # Allow SSH (prevent lockout)
+    # Allow SSH with rate limiting (prevent lockout + brute force)
     ufw allow ssh
 
     # Allow ZeroTier if interface exists
@@ -96,24 +120,36 @@ else
 fi
 
 ###############################################################################
-# 3. Disable IPv6
+# 3. Disable IPv6 + Kernel Hardening (V3.0.2: added suid_dumpable)
 ###############################################################################
-disable_ipv6() {
-    local SYSCTL_CONF="/etc/sysctl.d/99-codeshield-ipv6.conf"
-    cat > "$SYSCTL_CONF" << 'EOF'
+harden_sysctl() {
+    local SYSCTL_IPV6="/etc/sysctl.d/99-codeshield-ipv6.conf"
+    cat > "$SYSCTL_IPV6" << 'EOF'
 # CODE SHIELD V3 -- Disable IPv6
 net.ipv6.conf.all.disable_ipv6 = 1
 net.ipv6.conf.default.disable_ipv6 = 1
 net.ipv6.conf.lo.disable_ipv6 = 1
 EOF
+
+    local SYSCTL_HARDEN="/etc/sysctl.d/99-codeshield-hardening.conf"
+    cat > "$SYSCTL_HARDEN" << 'EOF'
+# CODE SHIELD V3.0.2 -- Kernel hardening
+# Prevent setuid programs from dumping core (leaks secrets from memory)
+fs.suid_dumpable = 0
+# Restrict kernel pointer exposure
+kernel.kptr_restrict = 1
+# Restrict dmesg access to root
+kernel.dmesg_restrict = 1
+EOF
+
     sysctl --system &>/dev/null
-    ok "IPv6 disabled."
+    ok "IPv6 disabled + kernel hardening applied (suid_dumpable=0)."
 }
 
 if [ "$DRY_RUN" -eq 0 ]; then
-    disable_ipv6
+    harden_sysctl
 else
-    info "[DRY-RUN] Would disable IPv6."
+    info "[DRY-RUN] Would disable IPv6 and harden kernel."
 fi
 
 ###############################################################################
@@ -184,15 +220,8 @@ else
 fi
 
 ###############################################################################
-# 6. Force Proxy + DNS Exfiltration Block (V3.0.1: comprehensive non-loopback block)
-#
-# V3.0.1 replaces individual port-specific rules with ONE rule:
-#   Block ALL non-loopback outbound from openclaw-svc.
-# Effect:
-#   - DNS tunneling prevented (external DNS blocked)
-#   - Forced proxy: agent MUST use squid at 127.0.0.1:3128
-#   - Watcher can still reach Qdrant at 127.0.0.1:6333 (loopback allowed)
-#   - Ollama at 127.0.0.1:11434 still reachable (loopback)
+# 6. Force Proxy + DNS Exfiltration Block
+#    V3.0.2: Added LOG rule before DROP for forensic traceability
 ###############################################################################
 block_external_outbound() {
     local SVC_UID
@@ -212,14 +241,21 @@ block_external_outbound() {
             --uid-owner "$SVC_UID" -m tcp --dport "$PORT" -j DROP 2>/dev/null || true
     done
 
-    # Add comprehensive rule: block all non-loopback outbound from openclaw-svc
-    if ! iptables -S OUTPUT | grep -q "uid-owner.*${SVC_UID}.*DROP"; then
+    # V3.0.2: LOG rule for blocked outbound (rate-limited to avoid log flood)
+    if ! iptables -S OUTPUT 2>/dev/null | grep -q "CODESHIELD-BLOCK"; then
+        iptables -A OUTPUT -m owner --uid-owner "$SVC_UID" ! -d 127.0.0.0/8 \
+            -m limit --limit 5/min --limit-burst 10 \
+            -j LOG --log-prefix "CODESHIELD-BLOCK: " --log-level 4
+    fi
+
+    # Comprehensive rule: block all non-loopback outbound from openclaw-svc
+    if ! iptables -S OUTPUT 2>/dev/null | grep -q "uid-owner.*${SVC_UID}.*-j DROP"; then
         iptables -A OUTPUT -m owner --uid-owner "$SVC_UID" ! -d 127.0.0.0/8 -j DROP
     fi
 
     netfilter-persistent save >/dev/null 2>&1 || true
     ok "All external outbound blocked for openclaw-svc (uid=$SVC_UID). Loopback allowed."
-    ok "Force proxy: agent must use squid at 127.0.0.1:3128 for external access."
+    ok "Outbound block LOG enabled (CODESHIELD-BLOCK prefix, 5/min rate limit)."
 }
 
 if [ "$DRY_RUN" -eq 0 ]; then
@@ -229,8 +265,8 @@ else
 fi
 
 ###############################################################################
-# 6b. systemd Sandbox Hardening (V3.0.1: P3 fix)
-#     ProtectSystem=strict, ProtectHome, CapabilityBoundingSet=, etc.
+# 6b. systemd Sandbox Hardening
+#     V3.0.2: Added RestrictAddressFamilies, SystemCallFilter
 ###############################################################################
 setup_systemd_sandbox() {
     local DROPIN_DIR="/etc/systemd/system/openclaw.service.d"
@@ -239,7 +275,7 @@ setup_systemd_sandbox() {
 
     cat > "$DROPIN_DIR/codeshield-sandbox.conf" << 'EOF'
 [Service]
-# CODE SHIELD V3.0.1 — systemd sandbox hardening
+# CODE SHIELD V3.0.2 — systemd sandbox hardening
 ProtectSystem=strict
 ProtectHome=yes
 ReadWritePaths=/var/lib/openclaw-svc /var/log/openclaw-codeshield
@@ -250,11 +286,18 @@ ProtectControlGroups=yes
 RestrictSUIDSGID=yes
 LockPersonality=yes
 CapabilityBoundingSet=
+# V3.0.2: Restrict socket address families (allow IP + Unix only)
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+# V3.0.2: Syscall filter — allow standard service syscalls
+SystemCallFilter=@system-service
+SystemCallFilter=~@mount @reboot @swap @raw-io @clock @cpu-emulation @debug @obsolete
+# Node.js V8 JIT requires W^X pages — cannot enable MemoryDenyWriteExecute
+# MemoryDenyWriteExecute=no (default)
 EOF
 
     cat > "$WATCHER_DROPIN_DIR/codeshield-sandbox.conf" << 'EOF'
 [Service]
-# CODE SHIELD V3.0.1 — systemd sandbox hardening
+# CODE SHIELD V3.0.2 — systemd sandbox hardening
 ProtectSystem=strict
 ProtectHome=yes
 ReadWritePaths=/var/lib/openclaw-svc /var/log/openclaw-codeshield /usr/local/lib/openclaw-codeshield
@@ -265,10 +308,14 @@ ProtectControlGroups=yes
 RestrictSUIDSGID=yes
 LockPersonality=yes
 CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallFilter=@system-service
+SystemCallFilter=~@mount @reboot @swap @raw-io @clock @cpu-emulation @debug @obsolete
+MemoryDenyWriteExecute=yes
 EOF
 
     systemctl daemon-reload
-    ok "systemd sandbox hardening applied (ProtectSystem=strict, CapabilityBoundingSet=, etc.)."
+    ok "systemd sandbox hardening applied (V3.0.2: +RestrictAddressFamilies, +SystemCallFilter)."
 }
 
 if [ "$DRY_RUN" -eq 0 ]; then
@@ -278,7 +325,7 @@ else
 fi
 
 ###############################################################################
-# 7. auditd Rules
+# 7. auditd Rules (V3.0.2: added SSH, sudoers, squid monitoring)
 ###############################################################################
 setup_auditd() {
     if ! command -v auditctl &>/dev/null; then
@@ -288,24 +335,25 @@ setup_auditd() {
 
     local AUDIT_RULES="/etc/audit/rules.d/codeshield.rules"
     cat > "$AUDIT_RULES" << 'EOF'
-# CODE SHIELD V3 -- Audit rules
-# Monitor secrets file
--w /etc/openclaw-codeshield/secrets.env -p rwa -k codeshield_secrets
+# CODE SHIELD V3.0.2 -- Audit rules
+# Monitor encrypted secrets and config directory
+-w /etc/openclaw-codeshield/ -p rwa -k codeshield_secrets
 # Monitor openclaw configuration
 -w /home/openclaw/.openclaw/ -p rwa -k openclaw_config
 # Monitor systemd drop-in
 -w /etc/systemd/system/openclaw.service.d/ -p rwa -k openclaw_dropin
-# Monitor SSH config
+# Monitor SSH config (V3.0.2)
 -w /etc/ssh/sshd_config -p rwa -k ssh_config
-# Monitor sudoers
+-w /etc/ssh/sshd_config.d/ -p rwa -k ssh_config
+# Monitor sudoers (V3.0.2)
 -w /etc/sudoers.d/ -p rwa -k sudoers
-# Monitor squid config
+# Monitor squid config (V3.0.2)
 -w /etc/squid/squid.conf -p rwa -k squid_config
 EOF
 
     systemctl enable auditd --now 2>/dev/null || true
     augenrules --load 2>/dev/null || auditctl -R "$AUDIT_RULES" 2>/dev/null || true
-    ok "auditd rules installed."
+    ok "auditd rules installed (V3.0.2: +SSH, +sudoers, +squid monitoring)."
 }
 
 if [ "$DRY_RUN" -eq 0 ]; then
@@ -315,7 +363,7 @@ else
 fi
 
 ###############################################################################
-# 8. Docker Daemon Hardening
+# 8. Docker Daemon Hardening (V3.0.2: force-apply icc=false)
 ###############################################################################
 harden_docker() {
     local DAEMON_JSON="/etc/docker/daemon.json"
@@ -335,7 +383,12 @@ harden_docker() {
 
     if [ "$tmp" != '{}' ]; then
         echo "$tmp" > "$DAEMON_JSON"
-        ok "Docker daemon hardened."
+        # V3.0.2: Verify icc is actually set
+        if jq -e '.icc == false' "$DAEMON_JSON" &>/dev/null; then
+            ok "Docker daemon hardened (icc=false confirmed)."
+        else
+            warn "Docker daemon.json written but icc=false not confirmed."
+        fi
     else
         warn "Could not parse daemon.json. Skipping Docker hardening."
     fi

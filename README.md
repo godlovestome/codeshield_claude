@@ -483,6 +483,11 @@ Four priority fixes from professional security audit:
 
 See [CHANGELOG.md](CHANGELOG.md) for full technical details.
 
+Contact: 
+John
+Email: iok@outlook.com
+
+
 ---
 
 ## License

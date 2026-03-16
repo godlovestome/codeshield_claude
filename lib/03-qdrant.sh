@@ -73,10 +73,39 @@ if [ -n "$QDRANT_COMPOSE" ]; then
             ok "Updated existing QDRANT__SERVICE__API_KEY."
         fi
 
+        # P1 fix (V3.0.1): Add container security hardening if not already present
+        if ! grep -q 'cap_drop' "$QDRANT_COMPOSE"; then
+            python3 - "$QDRANT_COMPOSE" << 'PY'
+import sys, re
+from pathlib import Path
+p = Path(sys.argv[1])
+text = p.read_text()
+# Insert security hardening after restart: line
+hardening = """    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+      - /qdrant/snapshots:size=256m"""
+# Insert before volumes: or at end of service block
+if 'restart:' in text and 'cap_drop' not in text:
+    text = re.sub(r'(    restart:[^\n]*)', r'\1\n' + hardening, text, count=1)
+    p.write_text(text)
+    print("  Added container security hardening to docker-compose")
+else:
+    print("  cap_drop already present or no restart: line found")
+PY
+            ok "Qdrant container hardened (cap_drop ALL, no-new-privileges, read_only)."
+        else
+            ok "Qdrant container security already hardened."
+        fi
+
         # Restart Qdrant
         COMPOSE_DIR=$(dirname "$QDRANT_COMPOSE")
         info "Restarting Qdrant ..."
-        (cd "$COMPOSE_DIR" && docker compose down && docker compose up -d) 2>&1 | while read -r line; do
+        (cd "$COMPOSE_DIR" && QDRANT_API_KEY="$QDRANT_API_KEY" docker compose up -d --force-recreate) 2>&1 | while read -r line; do
             info "  $line"
         done
 

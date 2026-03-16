@@ -11,7 +11,7 @@ set -euo pipefail
 ###############################################################################
 # Constants
 ###############################################################################
-readonly CS_VERSION="3.0.0"
+readonly CS_VERSION="3.0.1"
 readonly CS_CONF_DIR="/etc/openclaw-codeshield"
 readonly CS_LIB_DIR="/usr/local/lib/openclaw-codeshield"
 readonly CS_SBIN_DIR="/usr/local/sbin"

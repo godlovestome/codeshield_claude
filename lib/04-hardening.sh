@@ -184,30 +184,97 @@ else
 fi
 
 ###############################################################################
-# 6. DNS Exfiltration Block (iptables uid-owner)
+# 6. Force Proxy + DNS Exfiltration Block (V3.0.1: comprehensive non-loopback block)
+#
+# V3.0.1 replaces individual port-specific rules with ONE rule:
+#   Block ALL non-loopback outbound from openclaw-svc.
+# Effect:
+#   - DNS tunneling prevented (external DNS blocked)
+#   - Forced proxy: agent MUST use squid at 127.0.0.1:3128
+#   - Watcher can still reach Qdrant at 127.0.0.1:6333 (loopback allowed)
+#   - Ollama at 127.0.0.1:11434 still reachable (loopback)
 ###############################################################################
-block_dns_exfil() {
+block_external_outbound() {
     local SVC_UID
     SVC_UID=$(id -u openclaw-svc 2>/dev/null || echo "")
     if [ -z "$SVC_UID" ]; then
-        warn "openclaw-svc uid not found. Skipping DNS block."
+        warn "openclaw-svc uid not found. Skipping outbound block."
         return
     fi
 
-    # Block direct DNS from openclaw-svc (must go through system resolver)
-    if ! iptables -C OUTPUT -m owner --uid-owner "$SVC_UID" -p udp --dport 53 -j DROP &>/dev/null 2>&1; then
-        iptables -A OUTPUT -m owner --uid-owner "$SVC_UID" -p udp --dport 53 -j DROP
+    # Remove any legacy specific-port rules if present
+    for PORT in 53 6333 6334 6379 5432 27017 18789; do
+        iptables -D OUTPUT -p udp -m owner --uid-owner "$SVC_UID" \
+            -m udp --dport "$PORT" -j DROP 2>/dev/null || true
+        iptables -D OUTPUT -p tcp -m owner --uid-owner "$SVC_UID" \
+            -m tcp --dport "$PORT" -j DROP 2>/dev/null || true
+        iptables -D OUTPUT -d 127.0.0.1/32 -p tcp -m owner \
+            --uid-owner "$SVC_UID" -m tcp --dport "$PORT" -j DROP 2>/dev/null || true
+    done
+
+    # Add comprehensive rule: block all non-loopback outbound from openclaw-svc
+    if ! iptables -S OUTPUT | grep -q "uid-owner.*${SVC_UID}.*DROP"; then
+        iptables -A OUTPUT -m owner --uid-owner "$SVC_UID" ! -d 127.0.0.0/8 -j DROP
     fi
-    if ! iptables -C OUTPUT -m owner --uid-owner "$SVC_UID" -p tcp --dport 53 -j DROP &>/dev/null 2>&1; then
-        iptables -A OUTPUT -m owner --uid-owner "$SVC_UID" -p tcp --dport 53 -j DROP
-    fi
-    ok "DNS direct queries blocked for openclaw-svc (uid=$SVC_UID)."
+
+    netfilter-persistent save >/dev/null 2>&1 || true
+    ok "All external outbound blocked for openclaw-svc (uid=$SVC_UID). Loopback allowed."
+    ok "Force proxy: agent must use squid at 127.0.0.1:3128 for external access."
 }
 
 if [ "$DRY_RUN" -eq 0 ]; then
-    block_dns_exfil
+    block_external_outbound
 else
-    info "[DRY-RUN] Would block DNS exfiltration."
+    info "[DRY-RUN] Would block all external outbound from openclaw-svc."
+fi
+
+###############################################################################
+# 6b. systemd Sandbox Hardening (V3.0.1: P3 fix)
+#     ProtectSystem=strict, ProtectHome, CapabilityBoundingSet=, etc.
+###############################################################################
+setup_systemd_sandbox() {
+    local DROPIN_DIR="/etc/systemd/system/openclaw.service.d"
+    local WATCHER_DROPIN_DIR="/etc/systemd/system/mem-qdrant-watcher.service.d"
+    mkdir -p "$DROPIN_DIR" "$WATCHER_DROPIN_DIR"
+
+    cat > "$DROPIN_DIR/codeshield-sandbox.conf" << 'EOF'
+[Service]
+# CODE SHIELD V3.0.1 — systemd sandbox hardening
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/openclaw-svc /var/log/openclaw-codeshield
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+EOF
+
+    cat > "$WATCHER_DROPIN_DIR/codeshield-sandbox.conf" << 'EOF'
+[Service]
+# CODE SHIELD V3.0.1 — systemd sandbox hardening
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/openclaw-svc /var/log/openclaw-codeshield /usr/local/lib/openclaw-codeshield
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+EOF
+
+    systemctl daemon-reload
+    ok "systemd sandbox hardening applied (ProtectSystem=strict, CapabilityBoundingSet=, etc.)."
+}
+
+if [ "$DRY_RUN" -eq 0 ]; then
+    setup_systemd_sandbox
+else
+    info "[DRY-RUN] Would add systemd sandbox drop-ins."
 fi
 
 ###############################################################################

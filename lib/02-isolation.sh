@@ -44,6 +44,8 @@ fi
 # 3. Migrate inline secrets from openclaw.json to secrets.env
 ###############################################################################
 migrate_secrets() {
+    # P4 fix (V3.0.1): use del() to fully remove keys, not blank them.
+    # Also handles nested paths (e.g. .gateway.auth.token).
     if [ ! -f "$OPENCLAW_JSON" ]; then
         warn "openclaw.json not found at $OPENCLAW_JSON -- skipping migration."
         return 0
@@ -51,40 +53,85 @@ migrate_secrets() {
 
     info "Scanning openclaw.json for inline secrets ..."
 
-    local changed=0
-    # List of keys that should be externalized
-    local secret_keys=("telegramBotToken" "braveApiKey" "openaiApiKey" "gatewayToken" "qdrantApiKey")
-    local env_names=("TELEGRAM_BOT_TOKEN" "BRAVE_API_KEY" "OPENAI_API_KEY" "OPENCLAW_GATEWAY_TOKEN" "QDRANT_API_KEY")
+    python3 - "$OPENCLAW_JSON" "$SECRETS_FILE" << 'PY'
+import json, os, sys, pwd
+from pathlib import Path
 
-    for i in "${!secret_keys[@]}"; do
-        local jkey="${secret_keys[$i]}"
-        local ekey="${env_names[$i]}"
-        local jval
-        jval=$(jq -r ".$jkey // empty" "$OPENCLAW_JSON" 2>/dev/null || true)
+json_path  = Path(sys.argv[1])
+secrets_path = Path(sys.argv[2])
 
-        if [ -n "$jval" ] && [ "$jval" != "null" ]; then
-            info "Found inline secret: $jkey -> migrating to secrets.env"
-            # Update secrets.env if the key exists; append if not
-            if grep -q "^${ekey}=" "$SECRETS_FILE" 2>/dev/null; then
-                sed -i "s|^${ekey}=.*|${ekey}=${jval}|" "$SECRETS_FILE"
-            else
-                echo "${ekey}=${jval}" >> "$SECRETS_FILE"
-            fi
-            # Blank out in openclaw.json
-            local tmp
-            tmp=$(jq ".$jkey = \"\"" "$OPENCLAW_JSON")
-            echo "$tmp" > "$OPENCLAW_JSON"
-            changed=1
-        fi
-    done
+cfg = json.loads(json_path.read_text())
 
-    if [ "$changed" -eq 1 ]; then
-        chmod 0600 "$SECRETS_FILE"
-        chown root:root "$SECRETS_FILE"
-        ok "Secrets migrated from openclaw.json to secrets.env"
-    else
-        ok "No inline secrets found in openclaw.json."
-    fi
+# (json_dotpath, env_var_name)
+# Use dotted paths for nested keys — walks cfg recursively
+MAPPINGS = [
+    ("channels.telegram.botToken",       "TELEGRAM_BOT_TOKEN"),
+    ("tools.web.search.apiKey",           "BRAVE_API_KEY"),
+    ("gateway.auth.token",                "OPENCLAW_GATEWAY_TOKEN"),
+    ("auth.openai.apiKey",                "OPENAI_API_KEY"),
+    ("telegramBotToken",                  "TELEGRAM_BOT_TOKEN"),
+    ("braveApiKey",                       "BRAVE_API_KEY"),
+    ("gatewayToken",                      "OPENCLAW_GATEWAY_TOKEN"),
+    ("openaiApiKey",                      "OPENAI_API_KEY"),
+    ("qdrantApiKey",                      "QDRANT_API_KEY"),
+]
+
+def get_nested(obj, dotpath):
+    parts = dotpath.split(".")
+    cur = obj
+    for p in parts:
+        if not isinstance(cur, dict) or p not in cur:
+            return None
+        cur = cur[p]
+    return cur if isinstance(cur, str) and cur.strip() else None
+
+def del_nested(obj, dotpath):
+    parts = dotpath.split(".")
+    cur = obj
+    for p in parts[:-1]:
+        if not isinstance(cur, dict) or p not in cur:
+            return
+        cur = cur[p]
+    cur.pop(parts[-1], None)
+
+# Load existing secrets
+existing = {}
+if secrets_path.exists():
+    for line in secrets_path.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            existing[k.strip()] = v.strip().strip('"\'')
+
+changed = 0
+migrated = []
+for dotpath, envkey in MAPPINGS:
+    val = get_nested(cfg, dotpath)
+    if val:
+        if envkey not in existing or not existing[envkey]:
+            existing[envkey] = val
+        del_nested(cfg, dotpath)   # V3.0.1: fully DELETE, not blank
+        changed += 1
+        migrated.append(f"{dotpath} -> {envkey}")
+
+if changed:
+    # Write back cleaned json
+    json_path.write_text(json.dumps(cfg, indent=2) + "\n")
+    u = pwd.getpwnam("openclaw")
+    os.chown(json_path, u.pw_uid, u.pw_gid)
+    os.chmod(json_path, 0o600)
+    # Write secrets
+    lines = ["# Managed by CODE SHIELD. Keep mode 0600."]
+    for k, v in existing.items():
+        lines.append(f"{k}={v}")
+    secrets_path.write_text("\n".join(lines) + "\n")
+    os.chmod(secrets_path, 0o600)
+    os.chown(secrets_path, 0, 0)
+    for m in migrated:
+        print(f"  Migrated & deleted: {m}")
+else:
+    print("  No inline secrets found.")
+PY
 }
 
 if [ "$DRY_RUN" -eq 0 ]; then

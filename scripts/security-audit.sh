@@ -105,7 +105,7 @@ check "docker-user drop rules" \
     "iptables -L DOCKER-USER 2>/dev/null | grep -q DROP"
 
 check "dns direct query blocked" \
-    "iptables -L OUTPUT -n 2>/dev/null | grep 'dpt:53' | grep -q DROP || iptables -S OUTPUT 2>/dev/null | grep -qE 'uid-owner.*(openclaw-svc|[0-9]+).*dport 53.*DROP'"
+    "iptables -S OUTPUT 2>/dev/null | grep -qE 'uid-owner.*(997|openclaw-svc).*dport 53.*DROP' || iptables -S OUTPUT 2>/dev/null | grep -qE '! -d 127.0.0.0/8.*uid-owner.*(997|openclaw-svc).*DROP'"
 
 ###############################################################################
 # ACCESS CONTROL (8)
@@ -214,6 +214,29 @@ check "docker daemon hardened" \
 
 check "baseline exists" \
     "ls $CS_DATA_DIR/baseline-* 2>/dev/null | head -1 | grep -q . || test -f $CS_DATA_DIR/skills-baseline.json"
+
+###############################################################################
+# V3.0.1 SECURITY FIXES (6)
+###############################################################################
+[ "$QUIET" -eq 0 ] && printf "${BOLD}${DIM} --- V3.0.1 Security Fixes ---${RESET}\n"
+
+check "qdrant cap_drop all" \
+    "docker inspect qdrant-memory 2>/dev/null | python3 -c \"import sys,json; d=json.load(sys.stdin)[0]; caps=d['HostConfig'].get('CapDrop') or []; exit(0 if 'ALL' in caps else 1)\" 2>/dev/null"
+
+check "qdrant no-new-privileges" \
+    "docker inspect qdrant-memory 2>/dev/null | python3 -c \"import sys,json; d=json.load(sys.stdin)[0]; opts=d['HostConfig'].get('SecurityOpt') or []; exit(0 if any('no-new-privileges' in o for o in opts) else 1)\" 2>/dev/null"
+
+check "force proxy non-loopback block" \
+    "iptables -S OUTPUT 2>/dev/null | grep -qE '! -d 127.0.0.0/8.*uid-owner.*(997|openclaw-svc).*DROP'"
+
+check "openclaw protect system" \
+    "systemctl show openclaw.service -p ProtectSystem 2>/dev/null | grep -q 'strict'"
+
+check "openclaw capability bounding" \
+    "systemctl show openclaw.service -p CapabilityBoundingSet 2>/dev/null | grep -q 'CapabilityBoundingSet=$'"
+
+check "no inline gateway token" \
+    "! python3 -c \"import json,sys; cfg=json.load(open('/home/openclaw/.openclaw/openclaw.json')); sys.exit(0 if cfg.get('gateway',{}).get('auth',{}).get('token') else 1)\" 2>/dev/null"
 
 ###############################################################################
 # CONTINUOUS MONITORING (2)

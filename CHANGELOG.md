@@ -4,6 +4,75 @@ All notable changes to CODE SHIELD are documented here.
 
 ---
 
+## [3.0.3] — 2026-03-16
+
+### New Feature: `codeshield-config` CLI
+
+Post-install configuration management tool. Eliminates the need to re-run `openclaw onboard` after CODE SHIELD installation.
+
+#### Commands
+- **`codeshield-config show`** — Display all configuration with masked secrets
+- **`codeshield-config edit`** — Interactive editor for all secrets
+- **`codeshield-config set KEY=VALUE`** — Set individual config keys
+- **`codeshield-config add-model [provider]`** — Add LLM provider with built-in presets or custom
+- **`codeshield-config add-channel`** — Add messaging channel (generic framework)
+- **`codeshield-config proxy-allow <domain>`** — Add Squid whitelist domain
+- **`codeshield-config list-channels`** / **`list-models`** — List configured channels/models
+
+#### Multi-LLM Provider Support
+- **OpenAI** — API Key (`sk-*`) and OAuth 2.0 (`OPENAI_CLIENT_ID`, `OPENAI_CLIENT_SECRET`, `OPENAI_ORG_ID`)
+- **Anthropic** — `api.anthropic.com`, env var `ANTHROPIC_API_KEY`
+- **GLM5 (智谱 BigModel)** — `open.bigmodel.cn`, env var `GLM_API_KEY`
+- **Kimi 2.5 (月之暗面 Moonshot)** — `api.moonshot.cn`, env var `KIMI_API_KEY`
+- **Custom** — User-defined provider name, domains, env vars, and auth type
+- Interactive secret collection (`01-collect-secrets.sh`) now prompts for all providers
+- Secret migration (`02-isolation.sh`) expanded with new `openclaw.json` key mappings:
+  `auth.anthropic.apiKey`, `auth.glm.apiKey`, `auth.kimi.apiKey`, `auth.openai.clientId`, etc.
+
+#### Generic Channel Framework
+- Channel definitions stored in `/etc/openclaw-codeshield/channels.d/<name>.conf`
+- Format: `CHANNEL_NAME`, `CHANNEL_DOMAINS`, `CHANNEL_VARS`
+- `add-channel` interactively collects: name, API domains, env var names, values
+- Auto-updates Squid proxy whitelist and secrets.env
+- Supports any channel (Feishu, Slack, Discord, WeChat, DingTalk, etc.) without code changes
+
+#### Externalized Squid Whitelist
+- Additional domains stored in `/etc/openclaw-codeshield/proxy-whitelist.conf`
+- `squid.conf` template uses `dstdomain` ACL with external file include
+- `codeshield-config` commands auto-update whitelist and reload Squid
+
+### Deployment Reliability Fixes
+
+#### UTF-8 / Unicode Encoding (10 fixes)
+- **`install.sh`**: Force `LC_ALL=en_US.UTF-8` (fallback `C.UTF-8`) at script start
+- **`lib/01-collect-secrets.sh`**: `grep -qP` → `grep -qE` (PCRE → ERE, locale-independent)
+- **`lib/01-collect-secrets.sh`**: `eval "$var='$val'"` → `printf -v "$var" '%s' "$val"` (safe assignment)
+- **`lib/01-collect-secrets.sh`**: Heredoc secrets → `printf` per-line writing (UTF-8 safe)
+- **`lib/02-isolation.sh`**: Python `read_text(encoding='utf-8')`, `write_text(encoding='utf-8')`
+- **`lib/02-isolation.sh`**: `json.dumps(ensure_ascii=False)` for non-ASCII JSON preservation
+- **`lib/03-qdrant.sh`**: All `sed -i` prefixed with `LC_ALL=C` (binary-safe)
+- **`lib/03-qdrant.sh`**: Python `read_text`/`write_text` with `encoding='utf-8'`
+- **`scripts/squid-injection-guard.py`**: `io.TextIOWrapper` for stdin/stdout with UTF-8 + errors='replace'
+- **`lib/00-preflight.sh`**: Locale availability check with auto `locale-gen` fallback
+
+#### Error Handling & Recovery
+- **`--resume` flag**: Records checkpoint per stage; on failure, resume from last successful stage
+- **Install logging**: `exec > >(tee -a install.log) 2>&1` — all output to terminal + log file
+- **Error trap**: On failure, displays log path and `--resume` command
+- **Checkpoint cleared** on successful completion
+
+#### Preflight Improvements
+- Batch detection and auto-install of all missing required commands
+- Network connectivity check (GitHub raw + DNS resolution)
+- Qdrant compose search expanded: 7 candidate paths (was 4)
+- `netfilter-persistent` auto-installed if missing (iptables persistence)
+
+### Skills Policy Update
+- Added `anthropic-chat`, `glm-chat`, `kimi-chat` skills to approved list
+- Added generic `channel-send`, `channel-receive` skills (endpoints restricted by Squid whitelist)
+
+---
+
 ## [3.0.2] — 2026-03-16
 
 ### Security Fixes (Professional Audit Round 2)

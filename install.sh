@@ -17,7 +17,7 @@ export LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 2>/dev/null || \
 ###############################################################################
 # Constants
 ###############################################################################
-readonly CS_VERSION="3.0.2"
+readonly CS_VERSION="3.0.3"
 readonly CS_CONF_DIR="/etc/openclaw-codeshield"
 readonly CS_LIB_DIR="/usr/local/lib/openclaw-codeshield"
 readonly CS_SBIN_DIR="/usr/local/sbin"

@@ -38,8 +38,8 @@ prompt_secret() {
             fi
         fi
 
-        # Pattern validation
-        if [ -n "$pattern" ] && ! echo "$value" | grep -qP "$pattern"; then
+        # Pattern validation (use -E instead of -P for locale safety)
+        if [ -n "$pattern" ] && ! printf '%s' "$value" | grep -qE "$pattern"; then
             fail "Invalid format. Expected pattern: $pattern" >/dev/tty
             continue
         fi
@@ -48,7 +48,7 @@ prompt_secret() {
         break
     done
 
-    eval "$varname='$value'"
+    printf -v "$varname" '%s' "$value"
 }
 
 ###############################################################################
@@ -75,14 +75,14 @@ printf "Required fields are marked with ${RED}*${RESET}.\n\n" >/dev/tty
 prompt_secret TELEGRAM_BOT_TOKEN \
     "${RED}*${RESET} TELEGRAM_BOT_TOKEN" \
     "required" \
-    '^\d+:[A-Za-z0-9_-]{35,}$' \
+    '^[0-9]+:[A-Za-z0-9_-]{35,}$' \
     ""
 
 # TELEGRAM_CHAT_ID (required)
 prompt_secret TELEGRAM_CHAT_ID \
     "${RED}*${RESET} TELEGRAM_CHAT_ID" \
     "required" \
-    '^-?\d+$' \
+    '^-?[0-9]+$' \
     ""
 
 # BRAVE_API_KEY (optional)
@@ -97,6 +97,51 @@ prompt_secret OPENAI_API_KEY \
     "  OPENAI_API_KEY (optional, Enter to skip)" \
     "optional" \
     '^sk-' \
+    ""
+
+# OpenAI Auth Mode (API Key or OAuth)
+printf "\n${CYAN}OpenAI auth mode:${RESET} 1) API Key (default)  2) OAuth\n" >/dev/tty
+printf "Choice [1]: " >/dev/tty
+OPENAI_AUTH_MODE=""
+read -r OPENAI_AUTH_MODE </dev/tty 2>/dev/null || true
+if [ "$OPENAI_AUTH_MODE" = "2" ]; then
+    # OAuth mode: collect client ID, secret, org ID
+    prompt_secret OPENAI_CLIENT_ID \
+        "  OPENAI_CLIENT_ID (OAuth client ID)" \
+        "optional" \
+        "" \
+        ""
+    prompt_secret OPENAI_CLIENT_SECRET \
+        "  OPENAI_CLIENT_SECRET (OAuth client secret)" \
+        "optional" \
+        "" \
+        ""
+    prompt_secret OPENAI_ORG_ID \
+        "  OPENAI_ORG_ID (Organization ID, Enter to skip)" \
+        "optional" \
+        "" \
+        ""
+fi
+
+# ANTHROPIC_API_KEY (optional)
+prompt_secret ANTHROPIC_API_KEY \
+    "  ANTHROPIC_API_KEY (optional, Enter to skip)" \
+    "optional" \
+    '^sk-ant-' \
+    ""
+
+# GLM_API_KEY (optional -- 智谱 BigModel)
+prompt_secret GLM_API_KEY \
+    "  GLM_API_KEY (智谱 GLM5, optional, Enter to skip)" \
+    "optional" \
+    "" \
+    ""
+
+# KIMI_API_KEY (optional -- 月之暗面 Moonshot)
+prompt_secret KIMI_API_KEY \
+    "  KIMI_API_KEY (月之暗面 Kimi 2.5, optional, Enter to skip)" \
+    "optional" \
+    "" \
     ""
 
 # OPENCLAW_GATEWAY_TOKEN (optional, auto-generate)
@@ -121,17 +166,27 @@ prompt_secret QDRANT_API_KEY \
 if [ "$DRY_RUN" -eq 1 ]; then
     info "[DRY-RUN] Would write secrets to $SECRETS_FILE"
 else
-    cat > "$SECRETS_FILE" << SECRETS_EOF
-# CODE SHIELD V3 -- Managed Secrets
-# Generated: $(date -Iseconds)
-# Do NOT edit manually unless you know what you are doing.
-TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
-BRAVE_API_KEY=${BRAVE_API_KEY}
-OPENAI_API_KEY=${OPENAI_API_KEY}
-OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN}
-QDRANT_API_KEY=${QDRANT_API_KEY}
-SECRETS_EOF
+    # Write secrets using printf for UTF-8 safety (avoids shell expansion issues)
+    {
+        printf '# CODE SHIELD V3 -- Managed Secrets\n'
+        printf '# Generated: %s\n' "$(date -Iseconds)"
+        printf '# Do NOT edit manually. Use: codeshield-config edit\n'
+        printf 'TELEGRAM_BOT_TOKEN=%s\n' "$TELEGRAM_BOT_TOKEN"
+        printf 'TELEGRAM_CHAT_ID=%s\n' "$TELEGRAM_CHAT_ID"
+        printf 'BRAVE_API_KEY=%s\n' "$BRAVE_API_KEY"
+        printf 'OPENAI_API_KEY=%s\n' "$OPENAI_API_KEY"
+        # OpenAI OAuth fields (only if OAuth mode selected)
+        if [ "${OPENAI_AUTH_MODE:-}" = "2" ]; then
+            printf 'OPENAI_CLIENT_ID=%s\n' "${OPENAI_CLIENT_ID:-}"
+            printf 'OPENAI_CLIENT_SECRET=%s\n' "${OPENAI_CLIENT_SECRET:-}"
+            printf 'OPENAI_ORG_ID=%s\n' "${OPENAI_ORG_ID:-}"
+        fi
+        printf 'ANTHROPIC_API_KEY=%s\n' "${ANTHROPIC_API_KEY:-}"
+        printf 'GLM_API_KEY=%s\n' "${GLM_API_KEY:-}"
+        printf 'KIMI_API_KEY=%s\n' "${KIMI_API_KEY:-}"
+        printf 'OPENCLAW_GATEWAY_TOKEN=%s\n' "$OPENCLAW_GATEWAY_TOKEN"
+        printf 'QDRANT_API_KEY=%s\n' "$QDRANT_API_KEY"
+    } > "$SECRETS_FILE"
 
     chmod 0600 "$SECRETS_FILE"
     chown root:root "$SECRETS_FILE"
@@ -141,3 +196,5 @@ fi
 # Export for subsequent stages
 export TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID BRAVE_API_KEY OPENAI_API_KEY
 export OPENCLAW_GATEWAY_TOKEN QDRANT_API_KEY
+export ANTHROPIC_API_KEY GLM_API_KEY KIMI_API_KEY
+export OPENAI_CLIENT_ID OPENAI_CLIENT_SECRET OPENAI_ORG_ID 2>/dev/null || true

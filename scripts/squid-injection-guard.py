@@ -12,9 +12,16 @@ Output: OK rewrite-url=<url>  or  OK url=<url>  or  ERR
 """
 
 import sys
+import io
 import re
 import os
 import datetime
+
+# Force UTF-8 for stdin/stdout to handle non-ASCII URLs gracefully
+if hasattr(sys.stdin, 'buffer'):
+    sys.stdin = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8', errors='replace')
+if hasattr(sys.stdout, 'buffer'):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
 LOG_FILE = "/var/log/openclaw-codeshield/squid-guard.log"
 

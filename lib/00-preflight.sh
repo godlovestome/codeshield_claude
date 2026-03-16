@@ -6,6 +6,37 @@ info "Running environment pre-flight checks ..."
 
 PREFLIGHT_FAIL=0
 
+###############################################################################
+# Locale check -- ensure UTF-8 is available
+###############################################################################
+check_locale() {
+    if locale -a 2>/dev/null | grep -qi 'en_US\.utf-\?8'; then
+        ok "Locale: en_US.UTF-8 available."
+    elif locale -a 2>/dev/null | grep -qi 'C\.utf-\?8'; then
+        ok "Locale: C.UTF-8 available (fallback)."
+    else
+        warn "No UTF-8 locale found. Attempting to generate en_US.UTF-8 ..."
+        if command -v locale-gen &>/dev/null; then
+            locale-gen en_US.UTF-8 2>/dev/null || true
+            if locale -a 2>/dev/null | grep -qi 'en_US\.utf-\?8'; then
+                ok "Locale: en_US.UTF-8 generated successfully."
+            else
+                warn "Could not generate en_US.UTF-8. Using C.UTF-8 fallback."
+                export LC_ALL=C.UTF-8 LANG=C.UTF-8
+            fi
+        else
+            warn "locale-gen not found. Install 'locales' package for full UTF-8 support."
+            warn "Continuing with C.UTF-8 fallback."
+            export LC_ALL=C.UTF-8 LANG=C.UTF-8
+        fi
+    fi
+}
+
+check_locale
+
+###############################################################################
+# Command checks
+###############################################################################
 check_cmd() {
     if ! command -v "$1" &>/dev/null; then
         fail "Required command not found: $1"
@@ -16,13 +47,30 @@ check_cmd() {
 }
 
 # Required commands
-check_cmd curl
-check_cmd systemctl
-check_cmd ufw
-check_cmd docker
-check_cmd openssl
-check_cmd python3
-check_cmd jq
+REQUIRED_CMDS=(curl systemctl ufw docker openssl python3 jq)
+MISSING_CMDS=()
+
+for cmd in "${REQUIRED_CMDS[@]}"; do
+    if ! command -v "$cmd" &>/dev/null; then
+        MISSING_CMDS+=("$cmd")
+        fail "Required command not found: $cmd"
+        PREFLIGHT_FAIL=1
+    else
+        ok "Found: $cmd"
+    fi
+done
+
+# Try to install all missing required commands at once
+if [ ${#MISSING_CMDS[@]} -gt 0 ]; then
+    info "Attempting to install missing commands: ${MISSING_CMDS[*]} ..."
+    apt-get update -qq 2>/dev/null && apt-get install -y -qq "${MISSING_CMDS[@]}" 2>/dev/null && {
+        ok "Installed missing commands."
+        PREFLIGHT_FAIL=0
+    } || {
+        fail "Could not auto-install missing commands."
+        fail "Please install manually: apt-get install ${MISSING_CMDS[*]}"
+    }
+fi
 
 # Optional but recommended
 for opt_cmd in fail2ban-client squid auditctl zerotier-cli; do
@@ -30,6 +78,25 @@ for opt_cmd in fail2ban-client squid auditctl zerotier-cli; do
         warn "Optional command not found: $opt_cmd (will be installed if needed)"
     fi
 done
+
+###############################################################################
+# Network connectivity check
+###############################################################################
+check_network() {
+    info "Checking network connectivity ..."
+    if curl -fsSL --max-time 10 "https://raw.githubusercontent.com/godlovestome/codeshield_claude/main/install.sh" -o /dev/null 2>/dev/null; then
+        ok "Network: GitHub raw accessible."
+    else
+        warn "Cannot reach GitHub raw. If using local clone, this is OK."
+    fi
+    if nslookup github.com &>/dev/null 2>&1 || host github.com &>/dev/null 2>&1; then
+        ok "DNS resolution working."
+    else
+        warn "DNS resolution may not be working. Check /etc/resolv.conf."
+    fi
+}
+
+check_network
 
 # Check Ubuntu
 if [ -f /etc/os-release ]; then

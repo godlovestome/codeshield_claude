@@ -9,9 +9,15 @@
 set -euo pipefail
 
 ###############################################################################
+# Locale: force UTF-8 to prevent encoding errors in all stages
+###############################################################################
+export LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 2>/dev/null || \
+    export LC_ALL=C.UTF-8 LANG=C.UTF-8 2>/dev/null || true
+
+###############################################################################
 # Constants
 ###############################################################################
-readonly CS_VERSION="3.0.2"
+readonly CS_VERSION="3.0.3"
 readonly CS_CONF_DIR="/etc/openclaw-codeshield"
 readonly CS_LIB_DIR="/usr/local/lib/openclaw-codeshield"
 readonly CS_SBIN_DIR="/usr/local/sbin"
@@ -41,22 +47,24 @@ stage() { printf "\n${BOLD}━━━ [%s] %s ━━━${RESET}\n" "$1" "$2"; }
 DRY_RUN=0
 SKIP_PREFLIGHT=0
 UPDATE_MODE=0
+RESUME_MODE=0
 
 for arg in "$@"; do
     case "$arg" in
         --dry-run)        DRY_RUN=1 ;;
         --skip-preflight) SKIP_PREFLIGHT=1 ;;
         --update)         UPDATE_MODE=1 ;;
+        --resume)         RESUME_MODE=1 ;;
         --help|-h)
             echo "CODE SHIELD V3 Installer"
-            echo "Usage: install.sh [--dry-run] [--skip-preflight] [--update]"
+            echo "Usage: install.sh [--dry-run] [--skip-preflight] [--update] [--resume]"
             exit 0
             ;;
         *) warn "Unknown argument: $arg" ;;
     esac
 done
 
-export DRY_RUN SKIP_PREFLIGHT UPDATE_MODE
+export DRY_RUN SKIP_PREFLIGHT UPDATE_MODE RESUME_MODE
 export CS_VERSION CS_CONF_DIR CS_LIB_DIR CS_SBIN_DIR CS_LOG_DIR CS_DATA_DIR CS_REPO
 export RED GREEN YELLOW CYAN BOLD RESET
 
@@ -100,7 +108,58 @@ export -f fetch_lib fetch_file
 # Create base directories
 ###############################################################################
 mkdir -p "$CS_CONF_DIR" "$CS_LIB_DIR" "$CS_LOG_DIR" "$CS_DATA_DIR"
+mkdir -p "$CS_CONF_DIR/channels.d" "$CS_CONF_DIR/models.d"
 chmod 0700 "$CS_CONF_DIR"
+
+###############################################################################
+# Install logging -- tee all output to install.log
+###############################################################################
+INSTALL_LOG="$CS_LOG_DIR/install.log"
+exec > >(tee -a "$INSTALL_LOG") 2>&1
+info "Install log: $INSTALL_LOG"
+
+###############################################################################
+# Checkpoint / Resume support
+###############################################################################
+CHECKPOINT_FILE="$CS_DATA_DIR/.install-checkpoint"
+
+save_checkpoint() {
+    printf '%s\n' "$1" > "$CHECKPOINT_FILE"
+}
+
+get_checkpoint() {
+    if [ -f "$CHECKPOINT_FILE" ]; then
+        cat "$CHECKPOINT_FILE"
+    else
+        echo "0"
+    fi
+}
+
+clear_checkpoint() {
+    rm -f "$CHECKPOINT_FILE"
+}
+
+RESUME_FROM=0
+if [ "$RESUME_MODE" -eq 1 ]; then
+    RESUME_FROM=$(get_checkpoint)
+    if [ "$RESUME_FROM" -gt 0 ]; then
+        info "Resuming from stage $RESUME_FROM ..."
+    else
+        info "No checkpoint found. Starting from beginning."
+    fi
+fi
+
+###############################################################################
+# Error trap -- show helpful message on failure
+###############################################################################
+on_error() {
+    local exit_code=$?
+    fail "Installation failed at stage (exit code $exit_code)."
+    fail "Check log: $INSTALL_LOG"
+    fail "To resume from last checkpoint: install.sh --resume"
+    exit "$exit_code"
+}
+trap on_error ERR
 
 ###############################################################################
 # Download and cache lib scripts locally
@@ -135,6 +194,7 @@ SCRIPTS=(
     scripts/codeshield-secrets-unseal
     scripts/codeshield-secrets-reseal
     scripts/codeshield-secrets-migrate
+    scripts/codeshield-config
 )
 
 for s in "${SCRIPTS[@]}"; do
@@ -180,7 +240,13 @@ fi
 ###############################################################################
 run_stage() {
     local num="$1" total="$2" name="$3" script="$4"
+    # Skip stages before resume checkpoint
+    if [ "$RESUME_MODE" -eq 1 ] && [ "$num" -lt "$RESUME_FROM" ]; then
+        info "Skipping stage $num (already completed)."
+        return 0
+    fi
     stage "$num/$total" "$name"
+    save_checkpoint "$num"
     # shellcheck disable=SC1090
     source "$CS_LIB_DIR/$script"
 }
@@ -272,7 +338,7 @@ fi
 # Install CLI tools to /usr/local/sbin
 ###############################################################################
 info "Installing CLI tools ..."
-for tool in security-audit.sh openclaw-injection-scan openclaw-cost-monitor openclaw-guardian emergency-lockdown; do
+for tool in security-audit.sh openclaw-injection-scan openclaw-cost-monitor openclaw-guardian emergency-lockdown codeshield-config; do
     cp "$CS_LIB_DIR/$tool" "$CS_SBIN_DIR/$tool"
     chmod 0755 "$CS_SBIN_DIR/$tool"
 done
@@ -283,6 +349,8 @@ done
 stage "DONE" "Running security audit"
 bash "$CS_SBIN_DIR/security-audit.sh"
 
+clear_checkpoint
 printf "\n${GREEN}${BOLD}CODE SHIELD V3 installation complete.${RESET}\n"
 printf "Log: %s/install.log\n" "$CS_LOG_DIR"
-printf "Run ${CYAN}security-audit.sh${RESET} anytime to re-check.\n\n"
+printf "Run ${CYAN}security-audit.sh${RESET} anytime to re-check.\n"
+printf "Run ${CYAN}codeshield-config help${RESET} to manage configuration (API keys, channels, LLM models).\n\n"

@@ -53,6 +53,12 @@ migrate_secrets() {
 
     info "Scanning openclaw.json for inline secrets ..."
 
+    # Validate JSON before migration
+    if ! python3 -c "import json, sys; json.loads(open(sys.argv[1], encoding='utf-8').read())" "$OPENCLAW_JSON" 2>/dev/null; then
+        warn "openclaw.json is not valid JSON. Skipping migration."
+        return 0
+    fi
+
     python3 - "$OPENCLAW_JSON" "$SECRETS_FILE" << 'PY'
 import json, os, sys, pwd
 from pathlib import Path
@@ -60,7 +66,7 @@ from pathlib import Path
 json_path  = Path(sys.argv[1])
 secrets_path = Path(sys.argv[2])
 
-cfg = json.loads(json_path.read_text())
+cfg = json.loads(json_path.read_text(encoding='utf-8'))
 
 # (json_dotpath, env_var_name)
 # Use dotted paths for nested keys — walks cfg recursively
@@ -69,10 +75,19 @@ MAPPINGS = [
     ("tools.web.search.apiKey",           "BRAVE_API_KEY"),
     ("gateway.auth.token",                "OPENCLAW_GATEWAY_TOKEN"),
     ("auth.openai.apiKey",                "OPENAI_API_KEY"),
+    ("auth.openai.clientId",              "OPENAI_CLIENT_ID"),
+    ("auth.openai.clientSecret",          "OPENAI_CLIENT_SECRET"),
+    ("auth.openai.orgId",                 "OPENAI_ORG_ID"),
+    ("auth.anthropic.apiKey",             "ANTHROPIC_API_KEY"),
+    ("auth.glm.apiKey",                   "GLM_API_KEY"),
+    ("auth.kimi.apiKey",                  "KIMI_API_KEY"),
     ("telegramBotToken",                  "TELEGRAM_BOT_TOKEN"),
     ("braveApiKey",                       "BRAVE_API_KEY"),
     ("gatewayToken",                      "OPENCLAW_GATEWAY_TOKEN"),
     ("openaiApiKey",                      "OPENAI_API_KEY"),
+    ("anthropicApiKey",                   "ANTHROPIC_API_KEY"),
+    ("glmApiKey",                         "GLM_API_KEY"),
+    ("kimiApiKey",                        "KIMI_API_KEY"),
     ("qdrantApiKey",                      "QDRANT_API_KEY"),
 ]
 
@@ -116,7 +131,7 @@ for dotpath, envkey in MAPPINGS:
 
 if changed:
     # Write back cleaned json
-    json_path.write_text(json.dumps(cfg, indent=2) + "\n")
+    json_path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding='utf-8')
     u = pwd.getpwnam("openclaw")
     os.chown(json_path, u.pw_uid, u.pw_gid)
     os.chmod(json_path, 0o600)
@@ -124,7 +139,7 @@ if changed:
     lines = ["# Managed by CODE SHIELD. Keep mode 0600."]
     for k, v in existing.items():
         lines.append(f"{k}={v}")
-    secrets_path.write_text("\n".join(lines) + "\n")
+    secrets_path.write_text("\n".join(lines) + "\n", encoding='utf-8')
     os.chmod(secrets_path, 0o600)
     os.chown(secrets_path, 0, 0)
     for m in migrated:

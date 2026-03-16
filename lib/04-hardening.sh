@@ -201,6 +201,39 @@ setup_squid() {
         ok "Squid config deployed from template."
     fi
 
+    # Create default proxy whitelist file if not exists
+    local WHITELIST_FILE="$CS_CONF_DIR/proxy-whitelist.conf"
+    if [ ! -f "$WHITELIST_FILE" ]; then
+        cat > "$WHITELIST_FILE" << 'WLEOF'
+# CODE SHIELD -- Additional proxy whitelist domains
+# Managed by codeshield-config. One domain per line.
+# Base domains (telegram, openai, brave, openclaw, npm, github) are in squid.conf.
+# Add channel/model domains below:
+WLEOF
+        chmod 0644 "$WHITELIST_FILE"
+        ok "Default proxy whitelist created: $WHITELIST_FILE"
+    fi
+
+    # Populate whitelist from channels.d and models.d configs
+    local CHANNELS_DIR="$CS_CONF_DIR/channels.d"
+    local MODELS_DIR="$CS_CONF_DIR/models.d"
+    mkdir -p "$CHANNELS_DIR" "$MODELS_DIR"
+
+    for conf in "$CHANNELS_DIR"/*.conf "$MODELS_DIR"/*.conf; do
+        [ -f "$conf" ] || continue
+        local domains_line
+        domains_line=$(grep -E '^(CHANNEL_DOMAINS|MODEL_DOMAINS)=' "$conf" 2>/dev/null | cut -d'=' -f2-) || true
+        if [ -n "$domains_line" ]; then
+            IFS=',' read -ra doms <<< "$domains_line"
+            for d in "${doms[@]}"; do
+                d=$(printf '%s' "$d" | tr -d ' ')
+                if [ -n "$d" ] && ! grep -qxF "$d" "$WHITELIST_FILE" 2>/dev/null; then
+                    printf '%s\n' "$d" >> "$WHITELIST_FILE"
+                fi
+            done
+        fi
+    done
+
     # Deploy injection guard script
     local GUARD_SCRIPT="/usr/local/sbin/squid-injection-guard.py"
     if [ -f "$CS_LIB_DIR/squid-injection-guard.py" ]; then
@@ -253,6 +286,10 @@ block_external_outbound() {
         iptables -A OUTPUT -m owner --uid-owner "$SVC_UID" ! -d 127.0.0.0/8 -j DROP
     fi
 
+    if ! command -v netfilter-persistent &>/dev/null; then
+        info "Installing netfilter-persistent for iptables rule persistence ..."
+        apt-get install -y -qq iptables-persistent 2>/dev/null || true
+    fi
     netfilter-persistent save >/dev/null 2>&1 || true
     ok "All external outbound blocked for openclaw-svc (uid=$SVC_UID). Loopback allowed."
     ok "Outbound block LOG enabled (CODESHIELD-BLOCK prefix, 5/min rate limit)."

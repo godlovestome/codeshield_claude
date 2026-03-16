@@ -1,0 +1,641 @@
+#!/usr/bin/env bash
+# CODE SHIELD V3 -- Configuration Management CLI
+# Usage: codeshield-config <command> [args]
+#
+# Commands:
+#   show                     Show current configuration (secrets masked)
+#   edit                     Interactive edit of all secrets
+#   set KEY=VALUE            Set a single configuration key
+#   add-channel              Interactive: add a new messaging channel
+#   add-model [provider]     Add an LLM provider (openai|anthropic|glm5|kimi|custom)
+#   list-channels            List configured channels
+#   list-models              List configured LLM providers
+#   proxy-allow <domain>     Add a domain to the Squid proxy whitelist
+#   help                     Show this help message
+set -euo pipefail
+export LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 2>/dev/null || export LC_ALL=C.UTF-8 LANG=C.UTF-8 2>/dev/null || true
+
+###############################################################################
+# Constants
+###############################################################################
+readonly CS_CONF_DIR="/etc/openclaw-codeshield"
+readonly SECRETS_FILE="$CS_CONF_DIR/secrets.env"
+readonly SECRETS_ENC="$CS_CONF_DIR/secrets.env.enc"
+readonly WHITELIST_FILE="$CS_CONF_DIR/proxy-whitelist.conf"
+readonly CHANNELS_DIR="$CS_CONF_DIR/channels.d"
+readonly MODELS_DIR="$CS_CONF_DIR/models.d"
+readonly SQUID_CONF="/etc/squid/squid.conf"
+
+###############################################################################
+# Color helpers
+###############################################################################
+if [ -t 1 ] 2>/dev/null; then
+    RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+    CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
+else
+    RED=''; GREEN=''; YELLOW=''; CYAN=''; BOLD=''; RESET=''
+fi
+info()  { printf "${CYAN}[INFO]${RESET}  %s\n" "$*"; }
+ok()    { printf "${GREEN}[OK]${RESET}    %s\n" "$*"; }
+warn()  { printf "${YELLOW}[WARN]${RESET}  %s\n" "$*"; }
+fail()  { printf "${RED}[FAIL]${RESET}  %s\n" "$*"; }
+
+###############################################################################
+# Privilege check
+###############################################################################
+require_root() {
+    if [ "$(id -u)" -ne 0 ]; then
+        fail "This command must be run as root (sudo codeshield-config $*)."
+        exit 1
+    fi
+}
+
+###############################################################################
+# Secrets file management: decrypt -> edit -> re-encrypt
+###############################################################################
+ensure_dirs() {
+    mkdir -p "$CS_CONF_DIR" "$CHANNELS_DIR" "$MODELS_DIR"
+}
+
+# Decrypt secrets to plaintext (if encrypted)
+decrypt_secrets() {
+    if [ -f "$SECRETS_ENC" ] && command -v systemd-creds &>/dev/null; then
+        if [ ! -f "$SECRETS_FILE" ]; then
+            info "Decrypting secrets ..."
+            systemd-creds decrypt "$SECRETS_ENC" "$SECRETS_FILE" 2>/dev/null || {
+                # Try the unseal script as fallback
+                if [ -x /usr/local/sbin/codeshield-secrets-unseal ]; then
+                    /usr/local/sbin/codeshield-secrets-unseal
+                    # Copy from tmpfs runtime location
+                    if [ -f /run/openclaw-codeshield/secrets.env ]; then
+                        cp /run/openclaw-codeshield/secrets.env "$SECRETS_FILE"
+                    fi
+                fi
+            }
+        fi
+    fi
+    if [ ! -f "$SECRETS_FILE" ]; then
+        warn "No secrets file found. Creating empty one."
+        printf "# Managed by CODE SHIELD. Keep mode 0600.\n" > "$SECRETS_FILE"
+        chmod 0600 "$SECRETS_FILE"
+    fi
+}
+
+# Re-encrypt and clean up plaintext
+reencrypt_secrets() {
+    if command -v systemd-creds &>/dev/null && [ -f /var/lib/systemd/credential.secret ]; then
+        info "Re-encrypting secrets at rest ..."
+        if [ -x /usr/local/sbin/codeshield-secrets-seal ]; then
+            /usr/local/sbin/codeshield-secrets-seal --from "$SECRETS_FILE"
+            ok "Secrets re-encrypted."
+        else
+            warn "codeshield-secrets-seal not found. Secrets remain plaintext."
+        fi
+    fi
+}
+
+# Read a key from secrets file
+read_secret() {
+    local key="$1"
+    if [ -f "$SECRETS_FILE" ]; then
+        grep -E "^${key}=" "$SECRETS_FILE" 2>/dev/null | head -1 | cut -d'=' -f2-
+    fi
+}
+
+# Set a key in secrets file (add or replace)
+write_secret() {
+    local key="$1" value="$2"
+    if grep -qE "^${key}=" "$SECRETS_FILE" 2>/dev/null; then
+        # Replace existing -- use a temp file for safety with special chars
+        local tmpf
+        tmpf=$(mktemp)
+        while IFS= read -r line; do
+            if [[ "$line" == "${key}="* ]]; then
+                printf '%s=%s\n' "$key" "$value"
+            else
+                printf '%s\n' "$line"
+            fi
+        done < "$SECRETS_FILE" > "$tmpf"
+        mv "$tmpf" "$SECRETS_FILE"
+    else
+        printf '%s=%s\n' "$key" "$value" >> "$SECRETS_FILE"
+    fi
+    chmod 0600 "$SECRETS_FILE"
+}
+
+# Mask a secret for display (show first 4 and last 4 chars)
+mask_secret() {
+    local val="$1"
+    local len=${#val}
+    if [ "$len" -le 8 ]; then
+        printf '%s' "****"
+    else
+        printf '%s...%s' "${val:0:4}" "${val: -4}"
+    fi
+}
+
+###############################################################################
+# Squid whitelist management
+###############################################################################
+ensure_whitelist() {
+    if [ ! -f "$WHITELIST_FILE" ]; then
+        printf "# CODE SHIELD -- Additional proxy whitelist domains\n" > "$WHITELIST_FILE"
+        printf "# Added by codeshield-config. One domain per line.\n" >> "$WHITELIST_FILE"
+        chmod 0644 "$WHITELIST_FILE"
+    fi
+}
+
+add_to_whitelist() {
+    local domain="$1"
+    ensure_whitelist
+    if ! grep -qxF "$domain" "$WHITELIST_FILE" 2>/dev/null; then
+        printf '%s\n' "$domain" >> "$WHITELIST_FILE"
+        ok "Added $domain to proxy whitelist."
+    else
+        info "$domain already in whitelist."
+    fi
+}
+
+reload_squid() {
+    if systemctl is-active squid &>/dev/null; then
+        systemctl reload squid 2>/dev/null || systemctl restart squid 2>/dev/null || true
+        ok "Squid proxy reloaded."
+    fi
+}
+
+###############################################################################
+# Restart openclaw service
+###############################################################################
+restart_openclaw() {
+    if systemctl is-active openclaw &>/dev/null; then
+        info "Restarting openclaw service ..."
+        systemctl restart openclaw 2>/dev/null || true
+        ok "openclaw service restarted."
+    fi
+}
+
+###############################################################################
+# Command: show
+###############################################################################
+cmd_show() {
+    require_root
+    ensure_dirs
+    decrypt_secrets
+
+    printf "\n${BOLD}${CYAN}=== CODE SHIELD Configuration ===${RESET}\n\n"
+
+    # Show secrets (masked)
+    printf "${BOLD}Secrets:${RESET}\n"
+    while IFS= read -r line; do
+        [[ "$line" =~ ^#.*$ ]] && continue
+        [[ -z "$line" ]] && continue
+        local key val
+        key="${line%%=*}"
+        val="${line#*=}"
+        if [ -n "$val" ]; then
+            printf "  %-30s = %s\n" "$key" "$(mask_secret "$val")"
+        else
+            printf "  %-30s = ${YELLOW}(not set)${RESET}\n" "$key"
+        fi
+    done < "$SECRETS_FILE"
+
+    # Show channels
+    printf "\n${BOLD}Channels:${RESET}\n"
+    if [ -d "$CHANNELS_DIR" ] && ls "$CHANNELS_DIR"/*.conf &>/dev/null 2>&1; then
+        for cf in "$CHANNELS_DIR"/*.conf; do
+            local name domains
+            name=$(grep -E '^CHANNEL_NAME=' "$cf" 2>/dev/null | cut -d'=' -f2-)
+            domains=$(grep -E '^CHANNEL_DOMAINS=' "$cf" 2>/dev/null | cut -d'=' -f2-)
+            printf "  %-20s domains: %s\n" "$name" "$domains"
+        done
+    else
+        printf "  ${YELLOW}(none configured)${RESET}\n"
+    fi
+
+    # Show models
+    printf "\n${BOLD}LLM Providers:${RESET}\n"
+    if [ -d "$MODELS_DIR" ] && ls "$MODELS_DIR"/*.conf &>/dev/null 2>&1; then
+        for mf in "$MODELS_DIR"/*.conf; do
+            local name domains auth
+            name=$(grep -E '^MODEL_NAME=' "$mf" 2>/dev/null | cut -d'=' -f2-)
+            domains=$(grep -E '^MODEL_DOMAINS=' "$mf" 2>/dev/null | cut -d'=' -f2-)
+            auth=$(grep -E '^MODEL_AUTH_TYPE=' "$mf" 2>/dev/null | cut -d'=' -f2-)
+            printf "  %-20s domains: %-30s auth: %s\n" "$name" "$domains" "$auth"
+        done
+    else
+        printf "  ${YELLOW}(none configured -- OpenAI default via secrets.env)${RESET}\n"
+    fi
+
+    # Show whitelist
+    printf "\n${BOLD}Proxy Whitelist (additional):${RESET}\n"
+    if [ -f "$WHITELIST_FILE" ]; then
+        while IFS= read -r line; do
+            [[ "$line" =~ ^#.*$ ]] && continue
+            [[ -z "$line" ]] && continue
+            printf "  %s\n" "$line"
+        done < "$WHITELIST_FILE"
+        local count
+        count=$(grep -cvE '^\s*(#|$)' "$WHITELIST_FILE" 2>/dev/null || echo 0)
+        if [ "$count" -eq 0 ]; then
+            printf "  ${YELLOW}(none)${RESET}\n"
+        fi
+    else
+        printf "  ${YELLOW}(none)${RESET}\n"
+    fi
+
+    printf "\n"
+}
+
+###############################################################################
+# Command: edit
+###############################################################################
+cmd_edit() {
+    require_root
+    ensure_dirs
+    decrypt_secrets
+
+    printf "\n${BOLD}${CYAN}=== Interactive Secret Editor ===${RESET}\n"
+    printf "Press Enter to keep current value. Enter new value to change.\n\n"
+
+    local changed=0
+
+    while IFS= read -r line; do
+        [[ "$line" =~ ^#.*$ ]] && continue
+        [[ -z "$line" ]] && continue
+        local key val newval
+        key="${line%%=*}"
+        val="${line#*=}"
+
+        printf "${BOLD}%s${RESET} [current: %s]: " "$key" "$(mask_secret "$val")" >/dev/tty
+        read -r newval </dev/tty
+
+        if [ -n "$newval" ]; then
+            write_secret "$key" "$newval"
+            ok "Updated $key" >/dev/tty
+            changed=1
+        fi
+    done < "$SECRETS_FILE"
+
+    if [ "$changed" -eq 1 ]; then
+        reencrypt_secrets
+        restart_openclaw
+    else
+        info "No changes made."
+    fi
+}
+
+###############################################################################
+# Command: set KEY=VALUE
+###############################################################################
+cmd_set() {
+    require_root
+    ensure_dirs
+    decrypt_secrets
+
+    local input="$1"
+    local key="${input%%=*}"
+    local value="${input#*=}"
+
+    if [ "$key" = "$input" ] || [ -z "$key" ]; then
+        fail "Usage: codeshield-config set KEY=VALUE"
+        exit 1
+    fi
+
+    write_secret "$key" "$value"
+    ok "Set $key = $(mask_secret "$value")"
+
+    reencrypt_secrets
+    restart_openclaw
+}
+
+###############################################################################
+# Command: add-channel
+###############################################################################
+cmd_add_channel() {
+    require_root
+    ensure_dirs
+    decrypt_secrets
+
+    printf "\n${BOLD}${CYAN}=== Add New Channel ===${RESET}\n\n"
+
+    # Channel name
+    printf "${BOLD}Channel name${RESET} (e.g. feishu, slack, discord, wechat): " >/dev/tty
+    local name
+    read -r name </dev/tty
+    if [ -z "$name" ]; then
+        fail "Channel name is required."
+        exit 1
+    fi
+    # Sanitize name for filename
+    local safename
+    safename=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')
+
+    if [ -f "$CHANNELS_DIR/${safename}.conf" ]; then
+        warn "Channel '$safename' already exists. Overwriting."
+    fi
+
+    # Domains
+    printf "${BOLD}API domains${RESET} (comma-separated, e.g. open.feishu.cn,oapi.dingtalk.com): " >/dev/tty
+    local domains
+    read -r domains </dev/tty
+    if [ -z "$domains" ]; then
+        fail "At least one domain is required."
+        exit 1
+    fi
+
+    # Environment variable names
+    printf "${BOLD}Environment variable names${RESET} (comma-separated, e.g. FEISHU_APP_ID,FEISHU_APP_SECRET): " >/dev/tty
+    local varnames
+    read -r varnames </dev/tty
+
+    # Collect values for each variable
+    if [ -n "$varnames" ]; then
+        IFS=',' read -ra vars <<< "$varnames"
+        for var in "${vars[@]}"; do
+            var=$(printf '%s' "$var" | tr -d ' ')
+            printf "  ${BOLD}%s${RESET}: " "$var" >/dev/tty
+            local val
+            read -r val </dev/tty
+            if [ -n "$val" ]; then
+                write_secret "$var" "$val"
+                ok "Stored $var"
+            fi
+        done
+    fi
+
+    # Write channel conf
+    cat > "$CHANNELS_DIR/${safename}.conf" << CHEOF
+# CODE SHIELD -- Channel: $name
+CHANNEL_NAME=$name
+CHANNEL_DOMAINS=$domains
+CHANNEL_VARS=$varnames
+CHEOF
+    chmod 0600 "$CHANNELS_DIR/${safename}.conf"
+    ok "Channel config written: $CHANNELS_DIR/${safename}.conf"
+
+    # Update whitelist
+    IFS=',' read -ra doms <<< "$domains"
+    for d in "${doms[@]}"; do
+        d=$(printf '%s' "$d" | tr -d ' ')
+        add_to_whitelist "$d"
+    done
+
+    reencrypt_secrets
+    reload_squid
+    restart_openclaw
+
+    printf "\n${GREEN}Channel '$name' added successfully.${RESET}\n"
+}
+
+###############################################################################
+# Command: add-model [provider]
+###############################################################################
+cmd_add_model() {
+    require_root
+    ensure_dirs
+    decrypt_secrets
+
+    local provider="${1:-}"
+
+    # Built-in provider definitions
+    declare -A BUILTIN_NAMES=(
+        [openai]="OpenAI"
+        [openai-oauth]="OpenAI (OAuth)"
+        [anthropic]="Anthropic"
+        [glm5]="GLM5 (智谱 BigModel)"
+        [kimi]="Kimi 2.5 (月之暗面 Moonshot)"
+    )
+    declare -A BUILTIN_DOMAINS=(
+        [openai]="api.openai.com"
+        [openai-oauth]="api.openai.com,auth0.openai.com"
+        [anthropic]="api.anthropic.com"
+        [glm5]="open.bigmodel.cn"
+        [kimi]="api.moonshot.cn"
+    )
+    declare -A BUILTIN_VARS=(
+        [openai]="OPENAI_API_KEY"
+        [openai-oauth]="OPENAI_CLIENT_ID,OPENAI_CLIENT_SECRET,OPENAI_ORG_ID"
+        [anthropic]="ANTHROPIC_API_KEY"
+        [glm5]="GLM_API_KEY"
+        [kimi]="KIMI_API_KEY"
+    )
+    declare -A BUILTIN_AUTH=(
+        [openai]="apikey"
+        [openai-oauth]="oauth"
+        [anthropic]="apikey"
+        [glm5]="apikey"
+        [kimi]="apikey"
+    )
+
+    if [ -z "$provider" ]; then
+        printf "\n${BOLD}${CYAN}=== Add LLM Provider ===${RESET}\n\n"
+        printf "Select a provider:\n"
+        printf "  ${BOLD}1${RESET}) OpenAI (API Key)\n"
+        printf "  ${BOLD}2${RESET}) OpenAI (OAuth)\n"
+        printf "  ${BOLD}3${RESET}) Anthropic\n"
+        printf "  ${BOLD}4${RESET}) GLM5 (智谱 BigModel)\n"
+        printf "  ${BOLD}5${RESET}) Kimi 2.5 (月之暗面 Moonshot)\n"
+        printf "  ${BOLD}6${RESET}) Custom (自定义)\n"
+        printf "\nChoice [1-6]: " >/dev/tty
+        local choice
+        read -r choice </dev/tty
+        case "$choice" in
+            1) provider="openai" ;;
+            2) provider="openai-oauth" ;;
+            3) provider="anthropic" ;;
+            4) provider="glm5" ;;
+            5) provider="kimi" ;;
+            6) provider="custom" ;;
+            *) fail "Invalid choice."; exit 1 ;;
+        esac
+    fi
+
+    local name domains varnames authtype
+
+    if [ "$provider" = "custom" ]; then
+        printf "\n${BOLD}Provider name${RESET}: " >/dev/tty
+        read -r name </dev/tty
+        [ -z "$name" ] && { fail "Name is required."; exit 1; }
+
+        printf "${BOLD}API domains${RESET} (comma-separated): " >/dev/tty
+        read -r domains </dev/tty
+        [ -z "$domains" ] && { fail "At least one domain is required."; exit 1; }
+
+        printf "${BOLD}Environment variable names${RESET} (comma-separated): " >/dev/tty
+        read -r varnames </dev/tty
+
+        printf "${BOLD}Auth type${RESET} (apikey/oauth) [apikey]: " >/dev/tty
+        read -r authtype </dev/tty
+        authtype="${authtype:-apikey}"
+    else
+        name="${BUILTIN_NAMES[$provider]}"
+        domains="${BUILTIN_DOMAINS[$provider]}"
+        varnames="${BUILTIN_VARS[$provider]}"
+        authtype="${BUILTIN_AUTH[$provider]}"
+        printf "\n${BOLD}Adding: %s${RESET}\n" "$name"
+        printf "  Domains: %s\n" "$domains"
+        printf "  Variables: %s\n" "$varnames"
+        printf "  Auth: %s\n\n" "$authtype"
+    fi
+
+    # Sanitize provider name for filename
+    local safename
+    safename=$(printf '%s' "$provider" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')
+
+    # Collect variable values
+    if [ -n "$varnames" ]; then
+        IFS=',' read -ra vars <<< "$varnames"
+        for var in "${vars[@]}"; do
+            var=$(printf '%s' "$var" | tr -d ' ')
+            local existing
+            existing=$(read_secret "$var")
+            if [ -n "$existing" ]; then
+                printf "  ${BOLD}%s${RESET} [current: %s] (Enter to keep): " "$var" "$(mask_secret "$existing")" >/dev/tty
+            else
+                printf "  ${BOLD}%s${RESET}: " "$var" >/dev/tty
+            fi
+            local val
+            read -r val </dev/tty
+            if [ -n "$val" ]; then
+                write_secret "$var" "$val"
+                ok "Stored $var"
+            fi
+        done
+    fi
+
+    # Write model conf
+    cat > "$MODELS_DIR/${safename}.conf" << MEOF
+# CODE SHIELD -- LLM Provider: $name
+MODEL_NAME=$name
+MODEL_DOMAINS=$domains
+MODEL_VARS=$varnames
+MODEL_AUTH_TYPE=$authtype
+MEOF
+    chmod 0600 "$MODELS_DIR/${safename}.conf"
+    ok "Model config written: $MODELS_DIR/${safename}.conf"
+
+    # Update whitelist
+    IFS=',' read -ra doms <<< "$domains"
+    for d in "${doms[@]}"; do
+        d=$(printf '%s' "$d" | tr -d ' ')
+        add_to_whitelist "$d"
+    done
+
+    reencrypt_secrets
+    reload_squid
+    restart_openclaw
+
+    printf "\n${GREEN}LLM provider '%s' added successfully.${RESET}\n" "$name"
+}
+
+###############################################################################
+# Command: list-channels
+###############################################################################
+cmd_list_channels() {
+    printf "\n${BOLD}Configured Channels:${RESET}\n"
+    if [ -d "$CHANNELS_DIR" ] && ls "$CHANNELS_DIR"/*.conf &>/dev/null 2>&1; then
+        for cf in "$CHANNELS_DIR"/*.conf; do
+            local name domains vars
+            name=$(grep -E '^CHANNEL_NAME=' "$cf" 2>/dev/null | cut -d'=' -f2-)
+            domains=$(grep -E '^CHANNEL_DOMAINS=' "$cf" 2>/dev/null | cut -d'=' -f2-)
+            vars=$(grep -E '^CHANNEL_VARS=' "$cf" 2>/dev/null | cut -d'=' -f2-)
+            printf "  ${BOLD}%-15s${RESET}  domains: %-30s  vars: %s\n" "$name" "$domains" "$vars"
+        done
+    else
+        printf "  ${YELLOW}(none)${RESET}\n"
+    fi
+    printf "\n"
+}
+
+###############################################################################
+# Command: list-models
+###############################################################################
+cmd_list_models() {
+    printf "\n${BOLD}Configured LLM Providers:${RESET}\n"
+    if [ -d "$MODELS_DIR" ] && ls "$MODELS_DIR"/*.conf &>/dev/null 2>&1; then
+        for mf in "$MODELS_DIR"/*.conf; do
+            local name domains auth vars
+            name=$(grep -E '^MODEL_NAME=' "$mf" 2>/dev/null | cut -d'=' -f2-)
+            domains=$(grep -E '^MODEL_DOMAINS=' "$mf" 2>/dev/null | cut -d'=' -f2-)
+            auth=$(grep -E '^MODEL_AUTH_TYPE=' "$mf" 2>/dev/null | cut -d'=' -f2-)
+            vars=$(grep -E '^MODEL_VARS=' "$mf" 2>/dev/null | cut -d'=' -f2-)
+            printf "  ${BOLD}%-20s${RESET}  auth: %-8s  domains: %-30s  vars: %s\n" "$name" "$auth" "$domains" "$vars"
+        done
+    else
+        printf "  ${YELLOW}(none configured -- using secrets.env directly)${RESET}\n"
+    fi
+    printf "\n"
+}
+
+###############################################################################
+# Command: proxy-allow
+###############################################################################
+cmd_proxy_allow() {
+    require_root
+    local domain="${1:-}"
+    if [ -z "$domain" ]; then
+        fail "Usage: codeshield-config proxy-allow <domain>"
+        exit 1
+    fi
+    ensure_dirs
+    add_to_whitelist "$domain"
+    reload_squid
+}
+
+###############################################################################
+# Command: help
+###############################################################################
+cmd_help() {
+    cat << 'HELPEOF'
+CODE SHIELD Configuration Manager
+
+Usage: codeshield-config <command> [args]
+
+Commands:
+  show                     Show current configuration (secrets masked)
+  edit                     Interactive edit of all secrets
+  set KEY=VALUE            Set a single configuration key
+  add-channel              Interactive: add a new messaging channel
+  add-model [provider]     Add an LLM provider
+                           Providers: openai, openai-oauth, anthropic, glm5, kimi, custom
+  list-channels            List configured channels
+  list-models              List configured LLM providers
+  proxy-allow <domain>     Add a domain to the Squid proxy whitelist
+  help                     Show this help message
+
+Examples:
+  codeshield-config show
+  codeshield-config set ANTHROPIC_API_KEY=sk-ant-xxx
+  codeshield-config add-model anthropic
+  codeshield-config add-model glm5
+  codeshield-config add-channel
+  codeshield-config proxy-allow api.example.com
+HELPEOF
+}
+
+###############################################################################
+# Main dispatch
+###############################################################################
+main() {
+    local cmd="${1:-help}"
+    shift || true
+
+    case "$cmd" in
+        show)           cmd_show ;;
+        edit)           cmd_edit ;;
+        set)            cmd_set "${1:-}" ;;
+        add-channel)    cmd_add_channel ;;
+        add-model)      cmd_add_model "${1:-}" ;;
+        list-channels)  cmd_list_channels ;;
+        list-models)    cmd_list_models ;;
+        proxy-allow)    cmd_proxy_allow "${1:-}" ;;
+        help|--help|-h) cmd_help ;;
+        *)
+            fail "Unknown command: $cmd"
+            cmd_help
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"

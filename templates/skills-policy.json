@@ -56,6 +56,38 @@
       "description": "Write to PostgreSQL/Redis (store data)",
       "allowed_endpoints": ["localhost"],
       "max_calls_per_hour": 120
+    },
+    {
+      "name": "anthropic-chat",
+      "description": "Chat completions via Anthropic Claude API",
+      "allowed_endpoints": ["api.anthropic.com"],
+      "max_calls_per_hour": 120
+    },
+    {
+      "name": "glm-chat",
+      "description": "Chat completions via GLM5 (智谱 BigModel) API",
+      "allowed_endpoints": ["open.bigmodel.cn"],
+      "max_calls_per_hour": 120
+    },
+    {
+      "name": "kimi-chat",
+      "description": "Chat completions via Kimi 2.5 (月之暗面 Moonshot) API",
+      "allowed_endpoints": ["api.moonshot.cn"],
+      "max_calls_per_hour": 120
+    },
+    {
+      "name": "channel-send",
+      "description": "Send messages via configured channel (generic)",
+      "allowed_endpoints": ["*"],
+      "max_calls_per_hour": 120,
+      "note": "Endpoints restricted by Squid proxy whitelist and channel config"
+    },
+    {
+      "name": "channel-receive",
+      "description": "Receive messages via configured channel (generic)",
+      "allowed_endpoints": ["*"],
+      "max_calls_per_hour": 600,
+      "note": "Endpoints restricted by Squid proxy whitelist and channel config"
     }
   ],
   "blocked_actions": [

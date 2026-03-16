@@ -27,7 +27,10 @@ for candidate in \
     /home/openclaw/qdrant/docker-compose.yml \
     /home/openclaw/docker-compose.yml \
     /opt/qdrant/docker-compose.yml \
-    /home/openclaw/.openclaw/qdrant/docker-compose.yml; do
+    /home/openclaw/.openclaw/qdrant/docker-compose.yml \
+    /var/lib/openclaw-svc/qdrant/docker-compose.yml \
+    /root/qdrant/docker-compose.yml \
+    /srv/qdrant/docker-compose.yml; do
     if [ -f "$candidate" ]; then
         QDRANT_COMPOSE="$candidate"
         break
@@ -44,12 +47,12 @@ if [ -n "$QDRANT_COMPOSE" ]; then
         # Backup
         cp "$QDRANT_COMPOSE" "${QDRANT_COMPOSE}.bak.$(date +%s)"
 
-        # Ensure port binds to 127.0.0.1 only
+        # Ensure port binds to 127.0.0.1 only (LC_ALL=C for safe sed on config files)
         if grep -q '0\.0\.0\.0:6333' "$QDRANT_COMPOSE"; then
-            sed -i 's/0\.0\.0\.0:6333/127.0.0.1:6333/g' "$QDRANT_COMPOSE"
+            LC_ALL=C sed -i 's/0\.0\.0\.0:6333/127.0.0.1:6333/g' "$QDRANT_COMPOSE"
             ok "Qdrant port bound to 127.0.0.1:6333"
         elif grep -q '"6333:6333"' "$QDRANT_COMPOSE" || grep -q "'6333:6333'" "$QDRANT_COMPOSE"; then
-            sed -i "s|6333:6333|127.0.0.1:6333:6333|g" "$QDRANT_COMPOSE"
+            LC_ALL=C sed -i "s|6333:6333|127.0.0.1:6333:6333|g" "$QDRANT_COMPOSE"
             ok "Qdrant port bound to 127.0.0.1:6333"
         else
             ok "Qdrant port binding already looks restricted or custom."
@@ -60,16 +63,16 @@ if [ -n "$QDRANT_COMPOSE" ]; then
             # Inject environment variable for API key
             # Try to add under 'environment:' section
             if grep -q 'environment:' "$QDRANT_COMPOSE"; then
-                sed -i "/environment:/a\\      - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY}" "$QDRANT_COMPOSE"
+                LC_ALL=C sed -i "/environment:/a\\      - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY}" "$QDRANT_COMPOSE"
                 ok "Injected QDRANT__SERVICE__API_KEY into docker-compose."
             else
                 warn "No environment section found. Adding one."
-                sed -i "/qdrant:/a\\    environment:\\n      - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY}" "$QDRANT_COMPOSE"
+                LC_ALL=C sed -i "/qdrant:/a\\    environment:\\n      - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY}" "$QDRANT_COMPOSE"
                 ok "Added environment section with API key."
             fi
         else
             # Update existing key
-            sed -i "s|QDRANT__SERVICE__API_KEY=.*|QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY}|g" "$QDRANT_COMPOSE"
+            LC_ALL=C sed -i "s|QDRANT__SERVICE__API_KEY=.*|QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY}|g" "$QDRANT_COMPOSE"
             ok "Updated existing QDRANT__SERVICE__API_KEY."
         fi
 
@@ -79,7 +82,7 @@ if [ -n "$QDRANT_COMPOSE" ]; then
 import sys, re
 from pathlib import Path
 p = Path(sys.argv[1])
-text = p.read_text()
+text = p.read_text(encoding='utf-8')
 # Insert security hardening after restart: line
 hardening = """    cap_drop:
       - ALL
@@ -92,7 +95,7 @@ hardening = """    cap_drop:
 # Insert before volumes: or at end of service block
 if 'restart:' in text and 'cap_drop' not in text:
     text = re.sub(r'(    restart:[^\n]*)', r'\1\n' + hardening, text, count=1)
-    p.write_text(text)
+    p.write_text(text, encoding='utf-8')
     print("  Added container security hardening to docker-compose")
 else:
     print("  cap_drop already present or no restart: line found")
@@ -130,7 +133,8 @@ PY
     fi
 else
     warn "Qdrant docker-compose.yml not found. Skipping Qdrant hardening."
-    warn "Please configure Qdrant manually with API key: $QDRANT_API_KEY"
+    warn "Searched: /home/openclaw/qdrant/, /opt/qdrant/, /var/lib/openclaw-svc/qdrant/, /root/qdrant/, /srv/qdrant/"
+    warn "If Qdrant is at a different path, use: codeshield-config set QDRANT_API_KEY=<key>"
 fi
 
 ###############################################################################

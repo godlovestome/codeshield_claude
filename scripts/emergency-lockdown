@@ -1,0 +1,208 @@
+#!/usr/bin/env bash
+# CODE SHIELD V3 -- Emergency Lockdown
+# Immediately isolates OpenClaw, captures forensics, and notifies admin.
+#
+# Usage: emergency-lockdown [--reason "description"]
+set -euo pipefail
+
+###############################################################################
+# Constants
+###############################################################################
+readonly CS_CONF_DIR="/etc/openclaw-codeshield"
+readonly CS_LOG_DIR="/var/log/openclaw-codeshield"
+readonly CS_DATA_DIR="/var/lib/openclaw-codeshield"
+readonly SECRETS_FILE="$CS_CONF_DIR/secrets.env"
+readonly FORENSICS_KEY="$CS_CONF_DIR/forensics.key"
+readonly LOCKDOWN_DIR="$CS_DATA_DIR/lockdown-$(date +%Y%m%d-%H%M%S)"
+readonly OPENCLAW_HOME="/home/openclaw"
+readonly OPENCLAW_SVC_HOME="/var/lib/openclaw-svc"
+
+###############################################################################
+# Colors
+###############################################################################
+RED='\033[0;31m'; BOLD='\033[1m'; RESET='\033[0m'
+
+###############################################################################
+# Parse args
+###############################################################################
+REASON="Manual emergency lockdown"
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --reason) REASON="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+
+###############################################################################
+# Confirmation
+###############################################################################
+printf "${RED}${BOLD}"
+cat << 'BANNER'
+
+  *** EMERGENCY LOCKDOWN ***
+
+  This will:
+  1. Stop openclaw service immediately
+  2. Block all outbound network for openclaw-svc
+  3. Capture forensic snapshot (AES-256 encrypted)
+  4. Send Telegram alert
+  5. Service will NOT restart until manual unlock
+
+BANNER
+printf "${RESET}"
+
+printf "Reason: %s\n\n" "$REASON"
+printf "Type 'LOCKDOWN' to confirm: "
+read -r confirm </dev/tty
+if [ "$confirm" != "LOCKDOWN" ]; then
+    echo "Aborted."
+    exit 1
+fi
+
+echo ""
+echo "Initiating emergency lockdown ..."
+
+###############################################################################
+# Load Telegram
+###############################################################################
+TELEGRAM_BOT_TOKEN=""
+TELEGRAM_CHAT_ID=""
+if [ -f "$SECRETS_FILE" ]; then
+    # shellcheck disable=SC1090
+    source "$SECRETS_FILE"
+fi
+
+send_telegram() {
+    if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
+        curl -sf -X POST \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            -d "text=$1" \
+            --max-time 10 &>/dev/null || true
+    fi
+}
+
+###############################################################################
+# Step 1: Stop services
+###############################################################################
+echo "[1/5] Stopping openclaw services ..."
+systemctl stop openclaw.service 2>/dev/null || true
+systemctl stop openclaw-watcher.service 2>/dev/null || true
+# Prevent auto-restart
+systemctl mask openclaw.service 2>/dev/null || true
+echo "  Services stopped and masked."
+
+###############################################################################
+# Step 2: Network isolation
+###############################################################################
+echo "[2/5] Blocking network for openclaw-svc ..."
+SVC_UID=$(id -u openclaw-svc 2>/dev/null || echo "")
+if [ -n "$SVC_UID" ]; then
+    iptables -I OUTPUT -m owner --uid-owner "$SVC_UID" -j DROP 2>/dev/null || true
+    echo "  All outbound blocked for uid $SVC_UID."
+else
+    echo "  Warning: openclaw-svc user not found."
+fi
+
+###############################################################################
+# Step 3: Forensic capture
+###############################################################################
+echo "[3/5] Capturing forensic snapshot ..."
+mkdir -p "$LOCKDOWN_DIR"
+
+# Capture running processes
+ps auxf > "$LOCKDOWN_DIR/processes.txt" 2>/dev/null || true
+
+# Capture network connections
+ss -tulnp > "$LOCKDOWN_DIR/network-connections.txt" 2>/dev/null || true
+ss -tp > "$LOCKDOWN_DIR/established-connections.txt" 2>/dev/null || true
+
+# Capture iptables rules
+iptables-save > "$LOCKDOWN_DIR/iptables.txt" 2>/dev/null || true
+
+# Capture systemd journal for openclaw
+journalctl -u openclaw.service --since "24 hours ago" --no-pager \
+    > "$LOCKDOWN_DIR/openclaw-journal.txt" 2>/dev/null || true
+
+# Capture recent audit logs
+ausearch -ts recent > "$LOCKDOWN_DIR/audit-recent.txt" 2>/dev/null || true
+
+# Copy openclaw data
+cp -a "$OPENCLAW_SVC_HOME/.openclaw" "$LOCKDOWN_DIR/openclaw-data" 2>/dev/null || true
+cp -a "$OPENCLAW_HOME/.openclaw" "$LOCKDOWN_DIR/openclaw-home-data" 2>/dev/null || true
+
+# Copy squid logs
+cp /var/log/squid/access.log "$LOCKDOWN_DIR/squid-access.log" 2>/dev/null || true
+
+# Copy codeshield logs
+cp -a "$CS_LOG_DIR" "$LOCKDOWN_DIR/codeshield-logs" 2>/dev/null || true
+
+# Lockdown metadata
+cat > "$LOCKDOWN_DIR/lockdown-meta.json" << EOF
+{
+    "timestamp": "$(date -Iseconds)",
+    "reason": "$REASON",
+    "hostname": "$(hostname)",
+    "triggered_by": "$(whoami)",
+    "openclaw_svc_uid": "${SVC_UID:-unknown}"
+}
+EOF
+
+# Encrypt the forensic bundle
+echo "[3/5] Encrypting forensic bundle ..."
+ARCHIVE="$LOCKDOWN_DIR.tar.gz"
+tar czf "$ARCHIVE" -C "$(dirname "$LOCKDOWN_DIR")" "$(basename "$LOCKDOWN_DIR")"
+
+if [ -f "$FORENSICS_KEY" ]; then
+    AES_KEY=$(cat "$FORENSICS_KEY")
+    openssl enc -aes-256-cbc -salt -pbkdf2 \
+        -in "$ARCHIVE" \
+        -out "${ARCHIVE}.enc" \
+        -pass "pass:${AES_KEY}"
+    rm -f "$ARCHIVE"
+    echo "  Forensic bundle encrypted: ${ARCHIVE}.enc"
+else
+    echo "  Warning: No forensics key. Bundle saved unencrypted: $ARCHIVE"
+fi
+
+# Clean unencrypted data
+rm -rf "$LOCKDOWN_DIR"
+
+###############################################################################
+# Step 4: Send Telegram alert
+###############################################################################
+echo "[4/5] Sending Telegram alert ..."
+send_telegram "EMERGENCY LOCKDOWN ACTIVATED
+
+Reason: $REASON
+Time: $(date -Iseconds)
+Host: $(hostname)
+
+OpenClaw service has been stopped and masked.
+All outbound network blocked for openclaw-svc.
+Forensic snapshot captured.
+
+Manual intervention required to unlock."
+
+echo "  Alert sent."
+
+###############################################################################
+# Step 5: Log and summary
+###############################################################################
+echo "[5/5] Logging lockdown event ..."
+mkdir -p "$CS_LOG_DIR"
+echo "$(date -Iseconds) LOCKDOWN reason='$REASON' by=$(whoami)" >> "$CS_LOG_DIR/lockdown.log"
+
+printf "\n${RED}${BOLD}"
+echo "============================================"
+echo "  EMERGENCY LOCKDOWN COMPLETE"
+echo "============================================"
+printf "${RESET}"
+echo ""
+echo "To unlock:"
+echo "  1. systemctl unmask openclaw.service"
+echo "  2. iptables -D OUTPUT -m owner --uid-owner ${SVC_UID:-???} -j DROP"
+echo "  3. systemctl start openclaw.service"
+echo ""
+echo "Forensic data: ${ARCHIVE}.enc (or ${ARCHIVE})"
+echo ""

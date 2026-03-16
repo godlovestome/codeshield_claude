@@ -1,0 +1,222 @@
+#!/usr/bin/env bash
+# CODE SHIELD V3 -- One-Line Interactive Installer
+# curl -fsSL https://raw.githubusercontent.com/godlovestome/codeshield_claude/main/install.sh | bash
+#
+# Supports:
+#   --dry-run        Show what would be done without making changes
+#   --skip-preflight Skip environment pre-checks
+#   --update         Non-interactive re-apply (used by guardian)
+set -euo pipefail
+
+###############################################################################
+# Constants
+###############################################################################
+readonly CS_VERSION="3.0.0"
+readonly CS_CONF_DIR="/etc/openclaw-codeshield"
+readonly CS_LIB_DIR="/usr/local/lib/openclaw-codeshield"
+readonly CS_SBIN_DIR="/usr/local/sbin"
+readonly CS_LOG_DIR="/var/log/openclaw-codeshield"
+readonly CS_DATA_DIR="/var/lib/openclaw-codeshield"
+readonly CS_REPO="https://raw.githubusercontent.com/godlovestome/codeshield_claude/main"
+
+###############################################################################
+# Color helpers (safe for non-tty)
+###############################################################################
+if [ -t 1 ] 2>/dev/null || [ -t 2 ] 2>/dev/null; then
+    RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+    CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
+else
+    RED=''; GREEN=''; YELLOW=''; CYAN=''; BOLD=''; RESET=''
+fi
+
+info()  { printf "${CYAN}[INFO]${RESET}  %s\n" "$*"; }
+ok()    { printf "${GREEN}[OK]${RESET}    %s\n" "$*"; }
+warn()  { printf "${YELLOW}[WARN]${RESET}  %s\n" "$*"; }
+fail()  { printf "${RED}[FAIL]${RESET}  %s\n" "$*"; }
+stage() { printf "\n${BOLD}━━━ [%s] %s ━━━${RESET}\n" "$1" "$2"; }
+
+###############################################################################
+# Parse arguments
+###############################################################################
+DRY_RUN=0
+SKIP_PREFLIGHT=0
+UPDATE_MODE=0
+
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run)        DRY_RUN=1 ;;
+        --skip-preflight) SKIP_PREFLIGHT=1 ;;
+        --update)         UPDATE_MODE=1 ;;
+        --help|-h)
+            echo "CODE SHIELD V3 Installer"
+            echo "Usage: install.sh [--dry-run] [--skip-preflight] [--update]"
+            exit 0
+            ;;
+        *) warn "Unknown argument: $arg" ;;
+    esac
+done
+
+export DRY_RUN SKIP_PREFLIGHT UPDATE_MODE
+export CS_VERSION CS_CONF_DIR CS_LIB_DIR CS_SBIN_DIR CS_LOG_DIR CS_DATA_DIR CS_REPO
+export RED GREEN YELLOW CYAN BOLD RESET
+
+###############################################################################
+# Privilege check
+###############################################################################
+if [ "$(id -u)" -ne 0 ]; then
+    fail "This installer must be run as root."
+    exit 1
+fi
+
+###############################################################################
+# Determine source directory (local clone or remote fetch)
+###############################################################################
+SCRIPT_DIR=""
+if [ -f "$(dirname "${BASH_SOURCE[0]:-$0}")/lib/00-preflight.sh" ] 2>/dev/null; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+fi
+
+fetch_lib() {
+    local name="$1"
+    if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/lib/$name" ]; then
+        cat "$SCRIPT_DIR/lib/$name"
+    else
+        curl -fsSL "$CS_REPO/lib/$name"
+    fi
+}
+
+fetch_file() {
+    local path="$1"
+    if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/$path" ]; then
+        cat "$SCRIPT_DIR/$path"
+    else
+        curl -fsSL "$CS_REPO/$path"
+    fi
+}
+
+export -f fetch_lib fetch_file
+
+###############################################################################
+# Create base directories
+###############################################################################
+mkdir -p "$CS_CONF_DIR" "$CS_LIB_DIR" "$CS_LOG_DIR" "$CS_DATA_DIR"
+chmod 0700 "$CS_CONF_DIR"
+
+###############################################################################
+# Download and cache lib scripts locally
+###############################################################################
+LIB_SCRIPTS=(
+    00-preflight.sh
+    01-collect-secrets.sh
+    02-isolation.sh
+    03-qdrant.sh
+    04-hardening.sh
+    05-injection-defense.sh
+    06-guardian.sh
+)
+
+for lib in "${LIB_SCRIPTS[@]}"; do
+    info "Fetching lib/$lib ..."
+    fetch_lib "$lib" > "$CS_LIB_DIR/$lib"
+    chmod 0700 "$CS_LIB_DIR/$lib"
+done
+
+###############################################################################
+# Download scripts and templates
+###############################################################################
+SCRIPTS=(
+    scripts/security-audit.sh
+    scripts/openclaw-injection-scan
+    scripts/openclaw-cost-monitor
+    scripts/openclaw-guardian
+    scripts/emergency-lockdown
+)
+
+for s in "${SCRIPTS[@]}"; do
+    info "Fetching $s ..."
+    fetch_file "$s" > "$CS_LIB_DIR/$(basename "$s")"
+    chmod 0700 "$CS_LIB_DIR/$(basename "$s")"
+done
+
+TEMPLATES=(
+    templates/squid.conf
+    templates/soul-injection.md
+    templates/skills-policy.json
+)
+
+for t in "${TEMPLATES[@]}"; do
+    info "Fetching $t ..."
+    fetch_file "$t" > "$CS_LIB_DIR/$(basename "$t")"
+done
+
+###############################################################################
+# Banner
+###############################################################################
+printf "\n${BOLD}"
+cat << 'BANNER'
+   ____  ___  ____  _____   ____  _   _ ___ _____ _     ____   ____ _____
+  / ___|/ _ \|  _ \| ____| / ___|| | | |_ _| ____| |   |  _ \ / ___|___ /
+ | |  | | | | | | |  _|   \___ \| |_| || ||  _| | |   | | | | |     |_ \
+ | |__| |_| | |_| | |___   ___) |  _  || || |___| |___| |_| | |___ ___) |
+  \____\___/|____/|_____| |____/|_| |_|___|_____|_____|____/ \____|____/
+BANNER
+printf "${RESET}\n"
+printf "  ${CYAN}Version %s${RESET} -- AI Agent Network Security Shield\n\n" "$CS_VERSION"
+
+if [ "$DRY_RUN" -eq 1 ]; then
+    warn "DRY-RUN MODE: No changes will be made."
+fi
+
+###############################################################################
+# Execute stages
+###############################################################################
+run_stage() {
+    local num="$1" total="$2" name="$3" script="$4"
+    stage "$num/$total" "$name"
+    # shellcheck disable=SC1090
+    source "$CS_LIB_DIR/$script"
+}
+
+TOTAL=6
+START=0
+
+if [ "$UPDATE_MODE" -eq 1 ]; then
+    info "Update mode: skipping interactive stages, re-applying protection."
+    run_stage 2 "$TOTAL" "Isolation & secrets migration" "02-isolation.sh"
+    run_stage 4 "$TOTAL" "System hardening"             "04-hardening.sh"
+    run_stage 5 "$TOTAL" "Injection defense"            "05-injection-defense.sh"
+    run_stage 6 "$TOTAL" "Guardian service"             "06-guardian.sh"
+else
+    if [ "$SKIP_PREFLIGHT" -eq 0 ]; then
+        run_stage 1 "$TOTAL" "Environment pre-flight"       "00-preflight.sh"
+    else
+        warn "Skipping pre-flight checks."
+        START=1
+    fi
+    run_stage 2 "$TOTAL" "Collect secrets (interactive)" "01-collect-secrets.sh"
+    run_stage 3 "$TOTAL" "Isolation & secrets migration"  "02-isolation.sh"
+    run_stage 4 "$TOTAL" "Qdrant authentication"          "03-qdrant.sh"
+    run_stage 5 "$TOTAL" "System hardening"               "04-hardening.sh"
+    run_stage 6 "$TOTAL" "Injection defense + Guardian"   "05-injection-defense.sh"
+    # Guardian is always last
+    source "$CS_LIB_DIR/06-guardian.sh"
+fi
+
+###############################################################################
+# Install CLI tools to /usr/local/sbin
+###############################################################################
+info "Installing CLI tools ..."
+for tool in security-audit.sh openclaw-injection-scan openclaw-cost-monitor openclaw-guardian emergency-lockdown; do
+    cp "$CS_LIB_DIR/$tool" "$CS_SBIN_DIR/$tool"
+    chmod 0755 "$CS_SBIN_DIR/$tool"
+done
+
+###############################################################################
+# Final audit
+###############################################################################
+stage "DONE" "Running security audit"
+bash "$CS_SBIN_DIR/security-audit.sh"
+
+printf "\n${GREEN}${BOLD}CODE SHIELD V3 installation complete.${RESET}\n"
+printf "Log: %s/install.log\n" "$CS_LOG_DIR"
+printf "Run ${CYAN}security-audit.sh${RESET} anytime to re-check.\n\n"

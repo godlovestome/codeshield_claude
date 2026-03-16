@@ -1,0 +1,85 @@
+{
+  "$schema": "codeshield-v3-skills-policy",
+  "version": "3.0.0",
+  "description": "CODE SHIELD V3 - Skills Freeze Policy for OpenClaw",
+  "policy": {
+    "mode": "whitelist",
+    "enforcement": "strict",
+    "allow_new_skills": false,
+    "require_approval": true
+  },
+  "approved_skills": [
+    {
+      "name": "telegram-send",
+      "description": "Send messages via Telegram Bot API",
+      "allowed_endpoints": ["api.telegram.org"],
+      "max_calls_per_hour": 120
+    },
+    {
+      "name": "telegram-receive",
+      "description": "Receive messages via Telegram Bot API",
+      "allowed_endpoints": ["api.telegram.org"],
+      "max_calls_per_hour": 600
+    },
+    {
+      "name": "brave-search",
+      "description": "Web search via Brave Search API",
+      "allowed_endpoints": ["api.search.brave.com"],
+      "max_calls_per_hour": 60
+    },
+    {
+      "name": "openai-chat",
+      "description": "Chat completions via OpenAI API",
+      "allowed_endpoints": ["api.openai.com"],
+      "max_calls_per_hour": 120
+    },
+    {
+      "name": "qdrant-query",
+      "description": "Vector database queries (JARVIS + TRUE RECALL)",
+      "allowed_endpoints": ["127.0.0.1:6333"],
+      "max_calls_per_hour": 300
+    },
+    {
+      "name": "qdrant-upsert",
+      "description": "Vector database writes (memory storage)",
+      "allowed_endpoints": ["127.0.0.1:6333"],
+      "max_calls_per_hour": 120
+    },
+    {
+      "name": "database-read",
+      "description": "Read from PostgreSQL/Redis (store data)",
+      "allowed_endpoints": ["localhost"],
+      "max_calls_per_hour": 300
+    },
+    {
+      "name": "database-write",
+      "description": "Write to PostgreSQL/Redis (store data)",
+      "allowed_endpoints": ["localhost"],
+      "max_calls_per_hour": 120
+    }
+  ],
+  "blocked_actions": [
+    "shell-exec",
+    "file-write-system",
+    "file-read-system",
+    "network-raw",
+    "install-package",
+    "modify-config",
+    "create-user",
+    "modify-service",
+    "docker-exec",
+    "cron-modify"
+  ],
+  "rate_limits": {
+    "global_max_calls_per_minute": 30,
+    "global_max_calls_per_hour": 500,
+    "max_concurrent": 5
+  },
+  "integrity": {
+    "check_interval_minutes": 15,
+    "baseline_file": "/var/lib/openclaw-codeshield/skills-baseline.json",
+    "alert_on_new_skill": true,
+    "alert_on_modified_skill": true,
+    "alert_on_policy_change": true
+  }
+}

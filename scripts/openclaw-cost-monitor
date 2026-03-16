@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+# CODE SHIELD V3 -- OpenClaw Cost Monitor
+# Monitors API usage and costs, alerts on anomalies.
+set -uo pipefail
+
+###############################################################################
+# Constants
+###############################################################################
+readonly CS_CONF_DIR="/etc/openclaw-codeshield"
+readonly CS_LOG_DIR="/var/log/openclaw-codeshield"
+readonly CS_DATA_DIR="/var/lib/openclaw-codeshield"
+readonly SECRETS_FILE="$CS_CONF_DIR/secrets.env"
+
+# Cost thresholds (USD)
+readonly DAILY_WARN_THRESHOLD=10
+readonly DAILY_CRIT_THRESHOLD=50
+readonly HOURLY_WARN_THRESHOLD=5
+
+mkdir -p "$CS_LOG_DIR" "$CS_DATA_DIR"
+
+log() { echo "[$(date -Iseconds)] COST-MONITOR: $*"; }
+
+###############################################################################
+# Load Telegram config
+###############################################################################
+TELEGRAM_BOT_TOKEN=""
+TELEGRAM_CHAT_ID=""
+OPENAI_API_KEY=""
+if [ -f "$SECRETS_FILE" ]; then
+    # shellcheck disable=SC1090
+    source "$SECRETS_FILE"
+fi
+
+send_alert() {
+    local msg="$1"
+    log "ALERT: $msg"
+    if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
+        curl -sf -X POST \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            -d "text=CODE SHIELD COST ALERT: ${msg}" \
+            --max-time 10 &>/dev/null || true
+    fi
+}
+
+###############################################################################
+# Track request counts (file-based)
+###############################################################################
+COUNTER_FILE="$CS_DATA_DIR/cost-counters.json"
+TODAY=$(date +%Y-%m-%d)
+HOUR=$(date +%H)
+
+init_counters() {
+    if [ ! -f "$COUNTER_FILE" ]; then
+        echo '{}' > "$COUNTER_FILE"
+    fi
+}
+
+get_counter() {
+    local key="$1"
+    jq -r ".[\"$key\"] // 0" "$COUNTER_FILE" 2>/dev/null || echo 0
+}
+
+set_counter() {
+    local key="$1" value="$2"
+    local tmp
+    tmp=$(jq ".[\"$key\"] = $value" "$COUNTER_FILE" 2>/dev/null)
+    if [ -n "$tmp" ]; then
+        echo "$tmp" > "$COUNTER_FILE"
+    fi
+}
+
+###############################################################################
+# Analyze openclaw logs for API calls
+###############################################################################
+analyze_logs() {
+    local LOGFILE=""
+    for candidate in \
+        /var/log/openclaw-codeshield/openclaw.log \
+        /var/lib/openclaw-svc/.openclaw/logs/current.log \
+        /home/openclaw/.openclaw/logs/current.log; do
+        if [ -f "$candidate" ]; then
+            LOGFILE="$candidate"
+            break
+        fi
+    done
+
+    if [ -z "$LOGFILE" ]; then
+        log "No openclaw log file found for analysis."
+        return
+    fi
+
+    # Count API calls from today's logs
+    local api_calls=0
+    local today_str
+    today_str=$(date +%Y-%m-%d)
+
+    # Count lines mentioning API endpoints (heuristic)
+    api_calls=$(grep -c "$today_str" "$LOGFILE" 2>/dev/null | grep -cE '(openai|api\.telegram|brave)' 2>/dev/null || echo 0)
+
+    log "Estimated API calls today: $api_calls"
+
+    # Simple cost estimation (very rough: $0.01 per API call average)
+    local est_cost
+    est_cost=$(awk "BEGIN {printf \"%.2f\", $api_calls * 0.01}")
+
+    log "Estimated daily cost: \$$est_cost"
+
+    # Check thresholds
+    if awk "BEGIN {exit ($est_cost >= $DAILY_CRIT_THRESHOLD) ? 0 : 1}"; then
+        send_alert "CRITICAL: Estimated daily cost \$$est_cost exceeds \$$DAILY_CRIT_THRESHOLD threshold!"
+    elif awk "BEGIN {exit ($est_cost >= $DAILY_WARN_THRESHOLD) ? 0 : 1}"; then
+        send_alert "WARNING: Estimated daily cost \$$est_cost exceeds \$$DAILY_WARN_THRESHOLD threshold."
+    fi
+
+    set_counter "daily_${today_str}" "$api_calls"
+    set_counter "daily_cost_${today_str}" "${est_cost//./}"
+}
+
+###############################################################################
+# Check for rapid request bursts
+###############################################################################
+check_burst() {
+    local BURST_FILE="$CS_DATA_DIR/burst-tracker.txt"
+    local NOW
+    NOW=$(date +%s)
+    local WINDOW=300  # 5 minutes
+
+    # Record current check
+    echo "$NOW" >> "$BURST_FILE"
+
+    # Count recent entries
+    if [ -f "$BURST_FILE" ]; then
+        local cutoff=$((NOW - WINDOW))
+        local recent
+        recent=$(awk -v cutoff="$cutoff" '$1 >= cutoff' "$BURST_FILE" | wc -l)
+
+        # Clean old entries
+        awk -v cutoff="$cutoff" '$1 >= cutoff' "$BURST_FILE" > "${BURST_FILE}.tmp"
+        mv "${BURST_FILE}.tmp" "$BURST_FILE"
+
+        if [ "$recent" -gt 100 ]; then
+            send_alert "Request burst detected: $recent requests in 5 minutes!"
+        fi
+    fi
+}
+
+###############################################################################
+# Main
+###############################################################################
+log "=== Cost monitoring check ==="
+init_counters
+analyze_logs
+check_burst
+log "=== Check complete ==="

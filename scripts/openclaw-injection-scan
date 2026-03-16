@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# CODE SHIELD V3 -- Session Injection Scanner
+# Scans openclaw session/conversation files for prompt injection patterns.
+# Runs every 15 minutes via codeshield-scan.timer.
+set -uo pipefail
+
+###############################################################################
+# Constants
+###############################################################################
+readonly CS_CONF_DIR="/etc/openclaw-codeshield"
+readonly CS_LOG_DIR="/var/log/openclaw-codeshield"
+readonly SECRETS_FILE="$CS_CONF_DIR/secrets.env"
+readonly OPENCLAW_HOME="/home/openclaw"
+readonly OPENCLAW_SVC_HOME="/var/lib/openclaw-svc"
+
+mkdir -p "$CS_LOG_DIR"
+
+log() { echo "[$(date -Iseconds)] INJECTION-SCAN: $*"; }
+
+###############################################################################
+# Load Telegram config
+###############################################################################
+TELEGRAM_BOT_TOKEN=""
+TELEGRAM_CHAT_ID=""
+if [ -f "$SECRETS_FILE" ]; then
+    # shellcheck disable=SC1090
+    source "$SECRETS_FILE"
+fi
+
+send_alert() {
+    local msg="$1"
+    log "ALERT: $msg"
+    if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
+        curl -sf -X POST \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            -d "text=CODE SHIELD ALERT: ${msg}" \
+            -d "parse_mode=HTML" \
+            --max-time 10 &>/dev/null || true
+    fi
+}
+
+###############################################################################
+# Injection patterns (common prompt injection vectors)
+###############################################################################
+INJECTION_PATTERNS=(
+    'ignore previous instructions'
+    'ignore all previous'
+    'disregard above'
+    'forget your instructions'
+    'new system prompt'
+    'you are now'
+    'pretend you are'
+    'act as if you'
+    'override your'
+    'bypass security'
+    'bypass restrictions'
+    'jailbreak'
+    'DAN mode'
+    'developer mode'
+    'reveal your system prompt'
+    'show me your instructions'
+    'output your rules'
+    'repeat everything above'
+    'base64 decode'
+    'eval\s*('
+    'exec\s*('
+    '__import__'
+    'subprocess'
+    'os\.system'
+    'curl\s+.*\|.*sh'
+    'wget\s+.*\|.*sh'
+    '<script>'
+    'javascript:'
+    'data:text/html'
+    'CODESHIELD-CANARY'
+)
+
+###############################################################################
+# Scan function
+###############################################################################
+FINDINGS=0
+
+scan_directory() {
+    local dir="$1"
+    local label="$2"
+
+    if [ ! -d "$dir" ]; then
+        return
+    fi
+
+    log "Scanning $label ($dir) ..."
+
+    # Scan recent files (modified in last 30 minutes)
+    while IFS= read -r -d '' file; do
+        for pattern in "${INJECTION_PATTERNS[@]}"; do
+            if grep -qiP "$pattern" "$file" 2>/dev/null; then
+                FINDINGS=$((FINDINGS + 1))
+                local match
+                match=$(grep -m1 -iP "$pattern" "$file" 2>/dev/null | head -c 200)
+                log "  FOUND in $file: pattern='$pattern' match='$match'"
+
+                # Special: canary token detected means SOUL.md was leaked
+                if [[ "$pattern" == "CODESHIELD-CANARY" ]]; then
+                    send_alert "CANARY TOKEN detected in session file: $file -- possible SOUL.md exfiltration!"
+                fi
+            fi
+        done
+    done < <(find "$dir" -type f -newer /tmp/.codeshield-last-scan -print0 2>/dev/null || \
+             find "$dir" -type f -mmin -30 -print0 2>/dev/null)
+}
+
+###############################################################################
+# Main
+###############################################################################
+log "=== Injection scan started ==="
+
+# Scan session/conversation directories
+for base in "$OPENCLAW_HOME/.openclaw" "$OPENCLAW_SVC_HOME/.openclaw"; do
+    for subdir in sessions conversations messages logs; do
+        scan_directory "$base/$subdir" "$subdir"
+    done
+    # Also scan the base directory for any json files
+    if [ -d "$base" ]; then
+        while IFS= read -r -d '' file; do
+            for pattern in "${INJECTION_PATTERNS[@]}"; do
+                if grep -qiP "$pattern" "$file" 2>/dev/null; then
+                    FINDINGS=$((FINDINGS + 1))
+                    log "  FOUND in $file: pattern='$pattern'"
+                fi
+            done
+        done < <(find "$base" -maxdepth 1 -name "*.json" -type f -mmin -30 -print0 2>/dev/null)
+    fi
+done
+
+# Update scan timestamp
+touch /tmp/.codeshield-last-scan
+
+# Summary
+if [ "$FINDINGS" -gt 0 ]; then
+    send_alert "Injection scan found $FINDINGS suspicious pattern(s). Check $CS_LOG_DIR/injection-scan.log"
+    log "=== Scan complete: $FINDINGS finding(s) ==="
+else
+    log "=== Scan complete: clean ==="
+fi
+
+exit 0

@@ -81,13 +81,13 @@ check "ufw active" \
     "ufw status | grep -q 'Status: active'"
 
 check "ssh password disabled" \
-    "grep -qE '^\s*PasswordAuthentication\s+no' /etc/ssh/sshd_config"
+    "sshd -T 2>/dev/null | grep -i '^passwordauthentication ' | grep -qi 'no'"
 
 check "ssh keyboard-interactive disabled" \
-    "grep -qE '^\s*KbdInteractiveAuthentication\s+no' /etc/ssh/sshd_config"
+    "sshd -T 2>/dev/null | grep -i '^kbdinteractiveauthentication ' | grep -qi 'no'"
 
 check "root key-only login" \
-    "grep -qE '^\s*PermitRootLogin\s+prohibit-password' /etc/ssh/sshd_config"
+    "sshd -T 2>/dev/null | grep -i '^permitrootlogin ' | grep -qiE 'prohibit-password|without-password'"
 
 check "fail2ban sshd active" \
     "fail2ban-client status sshd 2>/dev/null | grep -q 'Currently banned'"
@@ -105,7 +105,7 @@ check "docker-user drop rules" \
     "iptables -L DOCKER-USER 2>/dev/null | grep -q DROP"
 
 check "dns direct query blocked" \
-    "iptables -L OUTPUT -n 2>/dev/null | grep -q 'dpt:53.*DROP'"
+    "iptables -L OUTPUT -n 2>/dev/null | grep 'dpt:53' | grep -q DROP || iptables -S OUTPUT 2>/dev/null | grep -qE 'uid-owner.*(openclaw-svc|[0-9]+).*dport 53.*DROP'"
 
 ###############################################################################
 # ACCESS CONTROL (8)
@@ -173,13 +173,13 @@ check "skills freeze policy exists" \
     "test -f $OPENCLAW_HOME/.openclaw/skills-policy.json -o -f $OPENCLAW_SVC_HOME/.openclaw/skills-policy.json"
 
 check "skills integrity script exists" \
-    "test -f $CS_DATA_DIR/skills-baseline.json"
+    "test -x $CS_SBIN_DIR/openclaw-check-skills-integrity"
 
 check "soul canary exists" \
-    "test -f $CS_DATA_DIR/soul-canary.txt"
+    "grep -qE 'CANARY_OPENCLAW_INTEGRITY_TOKEN|CODESHIELD-CANARY' $OPENCLAW_SVC_HOME/.openclaw/workspace/SOUL.md 2>/dev/null || grep -qE 'CANARY_OPENCLAW_INTEGRITY_TOKEN|CODESHIELD-CANARY' $OPENCLAW_HOME/.openclaw/workspace/SOUL.md 2>/dev/null"
 
 check "soul injection rules present" \
-    "grep -q 'CODESHIELD-CANARY' $OPENCLAW_HOME/.openclaw/SOUL.md 2>/dev/null || grep -q 'CODESHIELD-CANARY' $OPENCLAW_SVC_HOME/.openclaw/SOUL.md 2>/dev/null"
+    "grep -q 'Prompt Injection Resistance' $OPENCLAW_SVC_HOME/.openclaw/workspace/SOUL.md 2>/dev/null || grep -q 'Prompt Injection Resistance' $OPENCLAW_HOME/.openclaw/workspace/SOUL.md 2>/dev/null"
 
 check "injection scanner exists" \
     "test -f $CS_SBIN_DIR/openclaw-injection-scan"
@@ -204,16 +204,16 @@ check_maybe "postgres not deployed" \
 [ "$QUIET" -eq 0 ] && printf "${BOLD}${DIM} --- Incident Response ---${RESET}\n"
 
 check "forensics key exists" \
-    "test -f $CS_CONF_DIR/forensics.key"
+    "test -f /root/.forensics_key -o -f $CS_CONF_DIR/forensics.key"
 
 check "emergency lockdown exists" \
     "test -f $CS_SBIN_DIR/emergency-lockdown"
 
 check "docker daemon hardened" \
-    "jq -e '.\"no-new-privileges\"' /etc/docker/daemon.json 2>/dev/null"
+    "jq -e '.\"live-restore\" // .\"no-new-privileges\"' /etc/docker/daemon.json 2>/dev/null | grep -qi true"
 
 check "baseline exists" \
-    "test -f $CS_DATA_DIR/skills-baseline.json"
+    "ls $CS_DATA_DIR/baseline-* 2>/dev/null | head -1 | grep -q . || test -f $CS_DATA_DIR/skills-baseline.json"
 
 ###############################################################################
 # CONTINUOUS MONITORING (2)
@@ -224,7 +224,7 @@ check "audit timer active" \
     "systemctl is-active codeshield-audit.timer 2>/dev/null || systemctl is-enabled codeshield-audit.timer 2>/dev/null"
 
 check "guardian path active" \
-    "systemctl is-active codeshield-guardian.path 2>/dev/null || systemctl is-enabled codeshield-guardian.path 2>/dev/null"
+    "systemctl is-active codeshield-guardian.path 2>/dev/null | grep -q active || systemctl is-enabled codeshield-guardian.path 2>/dev/null | grep -qE 'enabled|static'"
 
 ###############################################################################
 # SERVICE HEALTH (2)

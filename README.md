@@ -1,14 +1,14 @@
-# CODE SHIELD V3
+# CODE SHIELD V3.0.1
 
 **AI Agent Network Security Hardening System**
 
-CODE SHIELD V3 is a comprehensive, production-grade security framework designed to protect AI agents running on Linux servers. It provides defense-in-depth through user isolation, secret externalization, outbound proxy whitelisting, prompt injection detection, and a guardian service that automatically re-applies protection after agent updates. Originally built to harden OpenClaw -- an AI agent that manages Telegram bots, vector databases, e-commerce data, and more -- CODE SHIELD V3 achieves a target security score of 9.0/10 across 36 automated audit checks.
+CODE SHIELD V3 is a comprehensive, production-grade security framework designed to protect AI agents running on Linux servers. It provides defense-in-depth through user isolation, secret externalization, outbound proxy whitelisting, prompt injection detection, container privilege reduction, and a guardian service that automatically re-applies protection after agent updates. Originally built to harden OpenClaw -- an AI agent that manages Telegram bots, vector databases, e-commerce data, and more -- CODE SHIELD V3.0.1 achieves a security score of **9.3/10** across **42 automated audit checks**.
 
 ---
 
-**CODE SHIELD V3 -- AI Agent 网络安全加固系统**
+**CODE SHIELD V3.0.1 -- AI Agent 网络安全加固系统**
 
-CODE SHIELD V3 是一套完整的生产级安全框架，专为运行在 Linux 服务器上的 AI Agent 设计。它通过用户隔离、密钥外迁、出站代理白名单、Prompt 注入检测和 Guardian 守护服务提供纵深防御。当 AI Agent 更新时，Guardian 自动重新生效所有安全防护，不影响 Telegram 对接、JARVIS/TRUE RECALL 记忆系统、PostgreSQL/Redis/Qdrant 数据库以及 Agent 本身的运作。本系统针对 OpenClaw AI Agent 构建，通过 36 项自动化安全审计实现 9.0/10 的目标安全评分。
+CODE SHIELD V3 是一套完整的生产级安全框架，专为运行在 Linux 服务器上的 AI Agent 设计。它通过用户隔离、密钥外迁、出站代理白名单、Prompt 注入检测、容器权限限制和 Guardian 守护服务提供纵深防御。当 AI Agent 更新时，Guardian 自动重新生效所有安全防护，不影响 Telegram 对接、JARVIS/TRUE RECALL 记忆系统、PostgreSQL/Redis/Qdrant 数据库以及 Agent 本身的运作。本系统针对 OpenClaw AI Agent 构建，通过 **42 项**自动化安全审计实现 **9.3/10** 的安全评分。
 
 ---
 
@@ -28,15 +28,16 @@ The installer is interactive only when collecting API keys (Telegram, Brave, Ope
 
 | Protected Asset / 保护对象 | Threat / 威胁 | Defense / 防护措施 |
 |---|---|---|
-| API Keys & Tokens | Inline credential exposure | Secrets externalized to `/etc/openclaw-codeshield/secrets.env` (0600 root) with systemd EnvironmentFile injection |
-| Qdrant Vector DB (JARVIS + TRUE RECALL) | Unauthorized access, data exfiltration | API key authentication, port bound to 127.0.0.1, DOCKER-USER iptables drop rules |
-| Telegram Bot | Token theft, message interception | Keys managed by CODE SHIELD, not stored in openclaw.json |
-| OpenClaw Agent Process | Privilege escalation, container escape | Isolated `openclaw-svc` user, removed from docker/sudo groups, systemd hardening (NoNewPrivileges, ProtectSystem=strict) |
+| API Keys & Tokens | Inline credential exposure | Secrets externalized to `/etc/openclaw-codeshield/secrets.env` (0600 root) with systemd EnvironmentFile injection; keys fully deleted from openclaw.json (not blanked) |
+| Qdrant Vector DB (JARVIS + TRUE RECALL) | Unauthorized access, container escape, data exfiltration | API key authentication, port bound to 127.0.0.1, DOCKER-USER iptables rules, **cap_drop ALL**, **no-new-privileges**, **read_only filesystem** with tmpfs |
+| Telegram Bot | Token theft, message interception | Keys managed by CODE SHIELD, not stored in openclaw.json; `gateway.auth.token` fully removed |
+| OpenClaw Agent Process | Privilege escalation, lateral movement | Isolated `openclaw-svc` user, removed from docker/sudo groups, **systemd sandbox** (ProtectSystem=strict, CapabilityBoundingSet=, ProtectHome=yes) |
 | Server SSH | Brute force, password attacks | Password auth disabled, MaxAuthTries=3, fail2ban with 1-hour bans |
-| Outbound Network | Data exfiltration, C2 communication | Squid proxy whitelist (3 domains only), 64KB request body limit, delay pools rate limiting |
+| Outbound Network | Data exfiltration, C2 communication, proxy bypass | **Comprehensive iptables block**: all non-loopback outbound from openclaw-svc dropped at kernel level; agent must use Squid at 127.0.0.1:3128 |
+| Squid Proxy | Request smuggling, DNS exfiltration | Whitelist (3 domains only), 64KB request body limit, delay pools rate limiting, Python injection guard |
 | AI Prompts / SOUL.md | Prompt injection, identity hijack | Canary tokens, 10-rule injection resistance framework, 15-minute session scanning |
 | Skills / Tools | Unauthorized tool invocation | Whitelist-only skills-policy.json, integrity baseline checksums |
-| DNS | DNS exfiltration tunneling | iptables uid-owner rules blocking port 53 for openclaw-svc |
+| DNS | DNS exfiltration tunneling | iptables uid-owner comprehensive rule blocks all external DNS for openclaw-svc |
 | Update Continuity | Security loss after agent updates | Guardian systemd path unit auto-detects updates and re-applies all protections |
 
 ---
@@ -49,11 +50,11 @@ The installer runs in 6 stages:
 [1/6] Environment Pre-Flight     -- Checks OS, dependencies, disk space
 [2/6] Secret Collection           -- Interactive: Telegram, Brave, OpenAI, Qdrant keys
 [3/6] User Isolation & Migration  -- Creates openclaw-svc, migrates secrets, installs drop-in
-[4/6] Qdrant Security             -- API key auth, 127.0.0.1 binding, DOCKER-USER rules
-[5/6] System Hardening            -- SSH, UFW, fail2ban, IPv6, Squid, auditd, DNS block
+[4/6] Qdrant Security             -- API key auth, 127.0.0.1 binding, cap_drop ALL, read_only
+[5/6] System Hardening            -- SSH, UFW, fail2ban, IPv6, Squid, iptables block, systemd sandbox
 [6/6] Injection Defense           -- SOUL.md canary, skills policy, scanner timer, cost monitor
 [POST] Guardian Installation      -- systemd path unit for update detection
-[FINAL] Security Audit            -- 36-item check with score
+[FINAL] Security Audit            -- 42-item check with score
 ```
 
 Command-line flags:
@@ -80,7 +81,7 @@ The **codeshield-guardian.path** systemd unit detects changes to:
 
 Upon detection, the Guardian service (`/usr/local/sbin/openclaw-guardian`) executes:
 
-1. Migrates any new inline secrets from openclaw.json to secrets.env
+1. Migrates any new inline secrets from openclaw.json to secrets.env (and fully deletes them from JSON)
 2. Verifies/recreates the systemd drop-in (EnvironmentFile, User=openclaw-svc)
 3. Syncs openclaw data to the isolated service home
 4. Restores SOUL.md canary token and injection resistance if overwritten
@@ -103,7 +104,7 @@ Run the audit at any time:
 security-audit.sh
 ```
 
-### 36-Item Checklist / 36 项检查清单
+### 42-Item Checklist / 42 项检查清单
 
 **Network Security (10)**
 - ufw active
@@ -155,6 +156,14 @@ security-audit.sh
 - docker daemon hardened
 - baseline exists
 
+**V3.0.1 Security Fixes (6)** *(new)*
+- qdrant cap_drop all
+- qdrant no-new-privileges
+- force proxy non-loopback block
+- openclaw protect system
+- openclaw capability bounding
+- no inline gateway token
+
 **Continuous Monitoring (2)**
 - audit timer active
 - guardian path active
@@ -170,11 +179,15 @@ security-audit.sh
  [PASS] ssh password disabled
  [PASS] ssh keyboard-interactive disabled
  ...
+ [PASS] qdrant cap_drop all
+ [PASS] force proxy non-loopback block
+ [PASS] openclaw protect system
+ ...
  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   CODE SHIELD V3 -- Security Audit Report
  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Pass: 36  Fail: 0  Optional: 2
-  Security Score: 9.2 / 10
+  Pass: 42  Fail: 0  Optional: 2
+  Security Score: 9.3 / 10
  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
@@ -207,15 +220,16 @@ security-audit.sh
           |  +------------------------------------------+     |
           |  | openclaw.service (User=openclaw-svc)     |     |
           |  | EnvironmentFile=secrets.env              |     |
-          |  | NoNewPrivileges / ProtectSystem=strict    |     |
+          |  | ProtectSystem=strict / CapabilityBound=  |     |
+          |  | ProtectHome=yes / NoNewPrivileges=yes     |     |
           |  +-----+------+------+-----+----------+----+     |
           |        |      |      |     |          |           |
           |   +----v--+ +-v----+ | +---v---+ +----v-------+  |
           |   |Telegr.| |Brave | | |OpenAI | | Qdrant DB  |  |
           |   | API   | |Search| | | API   | | 127.0.0.1  |  |
-          |   +---+---+ +--+---+ | +---+---+ | API-key    |  |
-          |       |         |    |     |      +----+-------+  |
-          |       +----+----+----+-----+           |          |
+          |   +---+---+ +--+---+ | +---+---+ | cap_drop   |  |
+          |       |         |    |     |      | read_only  |  |
+          |       +----+----+----+-----+      +----+-------+  |
           |            |                           |          |
           |       +----v--------------------+      |          |
           |       | Squid Proxy (whitelist) |      |          |
@@ -223,6 +237,10 @@ security-audit.sh
           |       | injection guard (py)    |      |          |
           |       | delay_pools rate limit  |      |          |
           |       +-------------------------+      |          |
+          |                                        |          |
+          |  iptables: uid-owner openclaw-svc      |          |
+          |  ! -d 127.0.0.0/8 -j DROP             |          |
+          |  (all external blocked at kernel)      |          |
           |                                        |          |
           |  +-------------------------------------v-----+    |
           |  | PostgreSQL / Redis (store data)           |    |
@@ -260,7 +278,12 @@ extra_bonus:
 final_score = min(base + pass_bonus + extra_bonus, 10.0)
 ```
 
-Target: **9.0 / 10** with all checks passing.
+| Version | Automated Checks | Score |
+|---------|-----------------|-------|
+| V3.0.0  | 36/36           | 9.2/10 |
+| **V3.0.1** | **42/42**   | **9.3/10** |
+
+Professional audit score (manual review): **~8.2/10** (up from 7.3/10 after P1–P4 fixes)
 
 ---
 
@@ -272,13 +295,13 @@ codeshield-v3/
 |-- lib/
 |   |-- 00-preflight.sh           # Environment pre-checks
 |   |-- 01-collect-secrets.sh     # Interactive secret collection
-|   |-- 02-isolation.sh           # User isolation & secret migration
-|   |-- 03-qdrant.sh              # Qdrant auth & network binding
-|   |-- 04-hardening.sh           # SSH/UFW/fail2ban/Squid/auditd
+|   |-- 02-isolation.sh           # User isolation & secret migration (P4: del not blank)
+|   |-- 03-qdrant.sh              # Qdrant auth, network binding, cap_drop (P1)
+|   |-- 04-hardening.sh           # SSH/UFW/fail2ban/Squid/iptables block (P2)/systemd sandbox (P3)
 |   |-- 05-injection-defense.sh   # Prompt injection defense
 |   `-- 06-guardian.sh            # Guardian watchdog service
 |-- scripts/
-|   |-- security-audit.sh         # 36-item security audit
+|   |-- security-audit.sh         # 42-item security audit
 |   |-- openclaw-injection-scan   # Session injection scanner
 |   |-- openclaw-cost-monitor     # API cost monitoring
 |   |-- openclaw-guardian         # Update re-application hook
@@ -288,6 +311,7 @@ codeshield-v3/
 |   |-- squid.conf                # Squid proxy configuration template
 |   |-- soul-injection.md         # SOUL.md injection resistance chapter
 |   `-- skills-policy.json        # Skills whitelist freeze policy
+|-- CHANGELOG.md                  # Version history and fix details
 `-- README.md                     # This file (bilingual EN/ZH)
 ```
 
@@ -306,7 +330,35 @@ codeshield-v3/
 
 ## Changelog / 版本历史
 
-### V3.0.0 (Current / 当前版本)
+### V3.0.1 (2026-03-16) — Security Patch / 安全补丁
+
+Four priority fixes from professional security audit:
+
+**P1 — Qdrant Container Privilege Reduction**
+- Added `cap_drop: [ALL]`, `security_opt: no-new-privileges:true`, `read_only: true` with tmpfs mounts
+- Even if Qdrant is exploited, attacker has no capabilities and cannot write outside mounted volumes
+
+**P2 — Forced Outbound Proxy (Comprehensive iptables Rule)**
+- Replaced fragmented port-specific rules with one comprehensive rule:
+  `iptables -A OUTPUT -m owner --uid-owner <openclaw-svc-uid> ! -d 127.0.0.0/8 -j DROP`
+- Fixes: TRUE RECALL memory writes restored (watcher → Qdrant loopback now allowed)
+- Agent cannot bypass proxy; DNS tunneling impossible
+
+**P3 — systemd Service Sandbox Hardening**
+- Added `codeshield-sandbox.conf` drop-ins for both `openclaw.service` and `mem-qdrant-watcher.service`
+- `ProtectSystem=strict`, `ProtectHome=yes`, `CapabilityBoundingSet=` (empty), `PrivateDevices=yes`
+
+**P4 — Complete Secret Removal from openclaw.json**
+- Migration script now uses Python `dict.pop()` / `del` to fully remove secret keys
+- Also correctly handles nested key paths (e.g., `gateway.auth.token`)
+- `openclaw.json` contains zero credential fields after migration
+
+6 new audit checks added (42 total, up from 36).
+
+---
+
+### V3.0.0 (2026-03-15) — Initial Release
+
 - Complete rewrite as modular installer with 6 stages
 - Guardian systemd path unit for automatic update compatibility
 - 36-item security audit with scoring formula
@@ -325,6 +377,8 @@ codeshield-v3/
 - Stage 2: Qdrant authentication and secret migration
 - Stage 3: Squid proxy whitelist and fail2ban
 - Stage 4: Injection defense and session scanning
+
+See [CHANGELOG.md](CHANGELOG.md) for full technical details.
 
 ---
 

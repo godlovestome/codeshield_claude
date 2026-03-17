@@ -344,9 +344,30 @@ cmd_add_channel() {
     fi
 
     # Environment variable names
-    printf "${BOLD}Environment variable names${RESET} (comma-separated, e.g. FEISHU_APP_ID,FEISHU_APP_SECRET): " >/dev/tty
     local varnames
-    read -r varnames </dev/tty
+    while true; do
+        printf "${BOLD}Environment variable names${RESET} (comma-separated, e.g. FEISHU_APP_ID,FEISHU_APP_SECRET): " >/dev/tty
+        read -r varnames </dev/tty
+
+        # Validate: each name must look like an env var (UPPER_CASE_WITH_DIGITS)
+        if [ -n "$varnames" ]; then
+            local valid=1
+            IFS=',' read -ra check_vars <<< "$varnames"
+            for cv in "${check_vars[@]}"; do
+                cv=$(printf '%s' "$cv" | tr -d ' ')
+                if ! printf '%s' "$cv" | grep -qE '^[A-Za-z_][A-Za-z0-9_]*$'; then
+                    fail "Invalid variable name: '$cv'" >/dev/tty
+                    fail "Variable names must contain only letters, digits, and underscores (e.g. TELEGRAM_BOT_TOKEN)." >/dev/tty
+                    fail "Do NOT enter the actual secret value here — only the variable NAME." >/dev/tty
+                    valid=0
+                    break
+                fi
+            done
+            [ "$valid" -eq 1 ] && break
+        else
+            break
+        fi
+    done
 
     # Collect values for each variable
     if [ -n "$varnames" ]; then
@@ -461,8 +482,24 @@ cmd_add_model() {
         read -r domains </dev/tty
         [ -z "$domains" ] && { fail "At least one domain is required."; exit 1; }
 
-        printf "${BOLD}Environment variable names${RESET} (comma-separated): " >/dev/tty
-        read -r varnames </dev/tty
+        while true; do
+            printf "${BOLD}Environment variable names${RESET} (comma-separated): " >/dev/tty
+            read -r varnames </dev/tty
+            if [ -n "$varnames" ]; then
+                local valid=1
+                IFS=',' read -ra check_vars <<< "$varnames"
+                for cv in "${check_vars[@]}"; do
+                    cv=$(printf '%s' "$cv" | tr -d ' ')
+                    if ! printf '%s' "$cv" | grep -qE '^[A-Za-z_][A-Za-z0-9_]*$'; then
+                        fail "Invalid variable name: '$cv'. Use UPPER_CASE names like MY_API_KEY." >/dev/tty
+                        valid=0; break
+                    fi
+                done
+                [ "$valid" -eq 1 ] && break
+            else
+                break
+            fi
+        done
 
         printf "${BOLD}Auth type${RESET} (apikey/oauth) [apikey]: " >/dev/tty
         read -r authtype </dev/tty

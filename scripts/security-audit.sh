@@ -158,6 +158,15 @@ check "codeshield-secrets service active" \
 check "no inline secrets in openclaw.json" \
     "! jq -r '.telegramBotToken // empty' $OPENCLAW_HOME/.openclaw/openclaw.json 2>/dev/null | grep -qE '.{10,}'"
 
+check "EnvironmentFile points to tmpfs" \
+    "grep -q 'EnvironmentFile=/run/openclaw-codeshield/secrets.env' /etc/systemd/system/openclaw.service.d/codeshield.conf 2>/dev/null"
+
+check "drop-in requires codeshield-secrets.service" \
+    "grep -q 'Requires=codeshield-secrets.service' /etc/systemd/system/openclaw.service.d/codeshield.conf 2>/dev/null"
+
+check "proxy vars in secrets" \
+    "grep -q '^HTTPS_PROXY=' /run/openclaw-codeshield/secrets.env 2>/dev/null || grep -q '^HTTPS_PROXY=' $CS_CONF_DIR/secrets.env 2>/dev/null"
+
 ###############################################################################
 # QDRANT SECURITY (2)
 ###############################################################################

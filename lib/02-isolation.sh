@@ -112,7 +112,7 @@ def del_nested(obj, dotpath):
 # Load existing secrets
 existing = {}
 if secrets_path.exists():
-    for line in secrets_path.read_text().splitlines():
+    for line in secrets_path.read_text(encoding='utf-8').splitlines():
         line = line.strip()
         if line and not line.startswith("#") and "=" in line:
             k, v = line.split("=", 1)

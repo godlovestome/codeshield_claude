@@ -38,7 +38,7 @@ deploy_skills_policy() {
 ###############################################################################
 deploy_soul_protection() {
     local SOUL_INJECTION="$CS_LIB_DIR/soul-injection.md"
-    local CANARY="CODESHIELD-CANARY-$(openssl rand -hex 8)"
+    local CANARY="CODESHIELD-CANARY-$(openssl rand -hex 16)"
 
     if [ ! -f "$SOUL_INJECTION" ]; then
         warn "soul-injection.md template not found."

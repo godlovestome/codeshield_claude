@@ -6,6 +6,40 @@ All notable changes to CODE SHIELD are documented here.
 
 ## [3.0.8] — 2026-03-17
 
+### Fix: openclaw web_fetch and tool calls fail — Squid whitelist too restrictive / 修复：web_fetch 和工具调用失败——Squid 白名单过于严格
+
+**Problem / 问题:** OpenClaw's `web_fetch` tool (and any AI agent tool that fetches arbitrary URLs) failed with `TypeError: fetch failed` because Squid was configured to only allow a fixed list of known API domains. Any URL outside that list — including `github.com`, weather APIs (`wttr.in`, `api.open-meteo.com`), or any page the user asked the agent to fetch — was silently denied with HTTP 403.
+
+**问题描述：** OpenClaw 的 `web_fetch` 工具（以及任何获取任意 URL 的 AI Agent 工具）因 Squid 仅允许已知 API 域名的固定列表而失败，报错 `TypeError: fetch failed`。任何不在该列表中的 URL——包括 `github.com`、天气 API（`wttr.in`、`api.open-meteo.com`）或用户要求 Agent 获取的任何页面——都被静默拒绝（HTTP 403）。
+
+**Additional problems / 附加问题:**
+- `request_body_max_size 65536 bytes` (64KB): LLM API calls with conversation history routinely exceed 64KB, causing silent failures. Increased to 10MB.
+- `request_body_max_size 65536 bytes` (64KB): 包含对话历史的大模型 API 调用通常超过 64KB，导致静默失败。已提高至 10MB。
+- `read_timeout 60s` / `request_timeout 60s`: Reasoning models (DeepSeek-R1, o1) can take 3-5 minutes to respond. Increased to 300s.
+- `read_timeout 60s` / `request_timeout 60s`: 推理模型（DeepSeek-R1、o1）可能需要 3-5 分钟响应。已提高至 300s。
+
+**Root cause / 根因:** CODE SHIELD's security model was designed as "block all + allow only known API domains." This is correct for preventing the agent from autonomously connecting to unknown servers, but conflicts with user-directed tool calls where the *user* is requesting the agent to fetch arbitrary web content.
+
+**根因：** CODE SHIELD 的安全模型设计为"全部阻断 + 仅允许已知 API 域名"。这对于防止 Agent 自主连接未知服务器是正确的，但与用户主动要求 Agent 获取任意网页内容的工具调用相冲突。
+
+**Fix / 修复:** Removed the domain restriction from Squid's `http_access` rule. All outbound traffic is now allowed **through the proxy** (only — direct external connections remain blocked by iptables at the kernel level). Security is maintained via:
+- iptables uid-owner rule: all external traffic from `openclaw-svc` **must** pass through Squid (direct access still returns timeout/ECONNREFUSED)
+- Rate limiting: increased to 1MB/s to allow LLM streaming, still throttles bulk exfiltration
+- Request body size limit: 10MB cap
+- Full access logging: all requests logged to `/var/log/squid/access.log`
+- Injection guard: URL rewrite scanner still active
+
+**修复方式：** 从 Squid 的 `http_access` 规则中移除域名限制。所有出站流量现在允许**通过代理**（iptables 在内核层面仍阻止直接外部连接）。安全性通过以下机制维持：
+- iptables uid-owner 规则：来自 `openclaw-svc` 的所有外部流量**必须**经过 Squid（直接访问仍返回超时/ECONNREFUSED）
+- 速率限制：提高至 1MB/s 以支持大模型流式响应，同时仍限制批量数据渗漏
+- 请求体大小限制：10MB 上限
+- 完整访问日志：所有请求记录到 `/var/log/squid/access.log`
+- 注入防护：URL 重写扫描器仍处于活跃状态
+
+**Files changed / 修改文件:** `templates/squid.conf`, `/etc/squid/squid.conf` (live)
+
+---
+
 ### New Feature: Automatic openclaw JS patching for non-native providers / 新功能：非原生提供商自动修补 openclaw JS
 
 **Problem / 问题:** OpenClaw's bundled JS dist files do not natively include DeepSeek or GLM5 as LLM providers. Three edits per dist file are required for each non-native provider: (1) add the API key env var to the `resolveEnvApiKey()` lookup map, (2) add a `buildProvider()` function with model definitions, (3) register the provider in `resolveImplicitProviders()`. There are 5 separate JS bundles, each containing their own copy of these functions. Previously this required manual editing after every openclaw update, and was completely undocumented for end-users.

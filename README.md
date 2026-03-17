@@ -39,7 +39,7 @@ The installer is interactive only when collecting API keys (Telegram, Brave, Ope
 | OpenClaw Agent Process | Privilege escalation, lateral movement | Isolated `openclaw-svc` user, removed from docker/sudo groups, **systemd sandbox** (ProtectSystem=strict, CapabilityBoundingSet=, RestrictAddressFamilies, SystemCallFilter, ProtectHome=yes) |
 | Server SSH | Brute force, tunneling, password attacks | Password auth disabled, MaxAuthTries=3, MaxSessions=3, **AllowTcpForwarding=no**, **AllowAgentForwarding=no**, fail2ban with 1-hour bans, sshd_config.d drop-in |
 | Outbound Network | Data exfiltration, C2 communication, proxy bypass | **Comprehensive iptables block** with LOG: all non-loopback outbound from openclaw-svc dropped at kernel level; agent must use Squid at 127.0.0.1:3128 |
-| Squid Proxy | Request smuggling, DNS exfiltration | Whitelist (3 domains only), 64KB request body limit, delay pools rate limiting, Python injection guard |
+| Squid Proxy | Request smuggling, DNS exfiltration | Full-traffic logging, 10MB request body limit, 1MB/s rate limiting, Python injection guard; all traffic forced through proxy by iptables |
 | AI Prompts / SOUL.md | Prompt injection, identity hijack | Canary tokens, 10-rule injection resistance framework, 15-minute session scanning |
 | Skills / Tools | Unauthorized tool invocation | Whitelist-only skills-policy.json, integrity baseline checksums |
 | DNS | DNS exfiltration tunneling | iptables uid-owner comprehensive rule blocks all external DNS for openclaw-svc |
@@ -99,6 +99,7 @@ codeshield-config list-models
 - Automatically restarts openclaw.service after changes / 修改后自动重启 openclaw 服务
 - **Non-native providers (deepseek, glm5) auto-patch openclaw JS dist files** — no manual file editing / 非原生提供商（deepseek、glm5）自动修补 openclaw JS 文件——无需手动编辑
 - Channel and model configs stored in `/etc/openclaw-codeshield/channels.d/` and `models.d/`
+- `proxy-allow` adds domains to the known-domains reference list (logging and future selective enforcement)
 
 **Supported LLM Providers (built-in) / 支持的大模型提供商（内置）:**
 

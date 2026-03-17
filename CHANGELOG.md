@@ -4,6 +4,32 @@ All notable changes to CODE SHIELD are documented here.
 
 ---
 
+## [3.0.5] — 2026-03-17
+
+### Bug Fixes / 缺陷修复
+
+#### Fix 1 — `dns direct query blocked` audit check always fails due to `iptables -S` field normalization / `dns direct query blocked` 审计检查因 `iptables -S` 字段归一化而始终失败
+
+- **Problem / 问题:** The `dns direct query blocked` audit check regex expected `uid-owner` to appear before `! -d 127.0.0.0/8` in `iptables -S OUTPUT` results. However, `iptables -S` normalizes rule output and places the destination filter (`! -d 127.0.0.0/8`) **before** the match extension (`-m owner --uid-owner $UID`). The actual output is `-A OUTPUT ! -d 127.0.0.0/8 -m owner --uid-owner 996 -j DROP`, but the regex pattern `uid-owner.*$SVC_UID.*(dport 53.*DROP|! -d 127.0.0.0/8.*DROP)` required `uid-owner` first — so it never matched. This is why `force proxy non-loopback block` (which uses the correct order `! -d 127.0.0.0/8.*uid-owner`) passed while `dns direct query blocked` failed.
+- **问题描述：** `dns direct query blocked` 审计检查的正则表达式要求 `uid-owner` 出现在 `! -d 127.0.0.0/8` 之前。但 `iptables -S` 对规则输出进行归一化，将目标过滤器 (`! -d 127.0.0.0/8`) 排在匹配扩展 (`-m owner --uid-owner $UID`) **之前**。实际输出为 `-A OUTPUT ! -d 127.0.0.0/8 -m owner --uid-owner 996 -j DROP`，但正则 `uid-owner.*$SVC_UID.*(dport 53.*DROP|! -d 127.0.0.0/8.*DROP)` 要求 `uid-owner` 在前——因此永远无法匹配。这解释了为什么 `force proxy non-loopback block`（使用正确顺序 `! -d 127.0.0.0/8.*uid-owner`）通过而 `dns direct query blocked` 失败。
+- **Fix / 修复:** Updated regex to `(uid-owner.*$SVC_UID.*dport 53.*DROP|! -d 127.0.0.0/8.*uid-owner.*$SVC_UID.*DROP)`. The first alternative matches a dedicated DNS port DROP rule; the second matches the comprehensive non-loopback block in the normalized field order.
+- **修复方式：** 将正则表达式更新为 `(uid-owner.*$SVC_UID.*dport 53.*DROP|! -d 127.0.0.0/8.*uid-owner.*$SVC_UID.*DROP)`。第一项匹配专用 DNS 端口 DROP 规则；第二项按归一化后的字段顺序匹配综合阻断规则。
+- **File changed / 修改文件:** `scripts/security-audit.sh` (line 120)
+
+#### Fix 2 — Scoring bonus not awarded when `netfilter-persistent` replaces UFW / 评分加分在 `netfilter-persistent` 替换 UFW 后未生效
+
+- **Problem / 问题:** The score calculation awards a +0.1 bonus for network hardening (firewall + SSH). The firewall check in the scoring section (line 340) only tested `ufw status | grep 'Status: active'`. On systems where `iptables-persistent` replaced UFW (the standard case after V3.0.3 install), this bonus was never awarded. V3.0.4 had fixed the audit _check_ to accept either firewall but missed updating the _scoring_ section.
+- **问题描述：** 评分计算为网络加固（防火墙 + SSH）提供 +0.1 加分。评分部分（第 340 行）的防火墙检查仅测试 `ufw status | grep 'Status: active'`。在 `iptables-persistent` 替换了 UFW 的系统上（V3.0.3 安装后的标准情况），此加分永远无法获得。V3.0.4 修复了审计_检查_以接受两种防火墙，但遗漏了_评分_部分的更新。
+- **Fix / 修复:** Updated scoring bonus to accept either `ufw status | grep active` or `systemctl is-active netfilter-persistent`.
+- **修复方式：** 评分加分逻辑改为同时接受 `ufw status | grep active` 或 `systemctl is-active netfilter-persistent`。
+- **File changed / 修改文件:** `scripts/security-audit.sh` (lines 340-342)
+
+#### Minor: Updated JSON output version string / 次要：更新 JSON 输出版本号
+
+- JSON output mode (`--json`) version string updated from `3.0.3` to `3.0.5`.
+
+---
+
 ## [3.0.4] — 2026-03-17
 
 ### Bug Fixes / 缺陷修复

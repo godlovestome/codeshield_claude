@@ -117,7 +117,7 @@ check "docker-user drop rules" \
     "iptables -L DOCKER-USER 2>/dev/null | grep -q DROP"
 
 check "dns direct query blocked" \
-    "SVC_UID=\$(id -u openclaw-svc 2>/dev/null) && iptables -S OUTPUT 2>/dev/null | grep -qE \"uid-owner.*(\$SVC_UID|openclaw-svc).*(dport 53.*DROP|! -d 127.0.0.0/8.*DROP)\""
+    "SVC_UID=\$(id -u openclaw-svc 2>/dev/null) && iptables -S OUTPUT 2>/dev/null | grep -qE \"(uid-owner.*\$SVC_UID.*dport 53.*DROP|! -d 127.0.0.0/8.*uid-owner.*\$SVC_UID.*DROP)\""
 
 ###############################################################################
 # ACCESS CONTROL (11)
@@ -337,7 +337,7 @@ if [ "$TOTAL" -gt 0 ]; then
     if systemctl is-active codeshield-guardian.path &>/dev/null 2>&1; then
         BONUS=$(awk "BEGIN {printf \"%.1f\", $BONUS + 0.1}")
     fi
-    if ufw status 2>/dev/null | grep -q "Status: active" && \
+    if { ufw status 2>/dev/null | grep -q "Status: active" || systemctl is-active --quiet netfilter-persistent 2>/dev/null; } && \
        sshd -T 2>/dev/null | grep -i '^passwordauthentication ' | grep -qi 'no'; then
         BONUS=$(awk "BEGIN {printf \"%.1f\", $BONUS + 0.1}")
     fi
@@ -380,7 +380,7 @@ if [ "$JSON_MODE" -eq 1 ]; then
         _json_checks="${_json_checks}{\"section\":\"${section}\",\"name\":\"${name}\",\"status\":\"${status}\"}"
         _first=0
     done <<< "$_JSON_RESULTS"
-    printf '{"version":"3.0.3","timestamp":"%s","pass":%d,"fail":%d,"optional":%d,"total":%d,"score":%s,"checks":[%s]}\n' \
+    printf '{"version":"3.0.5","timestamp":"%s","pass":%d,"fail":%d,"optional":%d,"total":%d,"score":%s,"checks":[%s]}\n' \
         "$(date -Iseconds)" "$PASS" "$FAIL" "$MAYBE" "$TOTAL" "$FINAL_SCORE" "$_json_checks"
 fi
 

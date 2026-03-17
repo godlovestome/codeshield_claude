@@ -4,6 +4,46 @@ All notable changes to CODE SHIELD are documented here.
 
 ---
 
+## [3.0.4] — 2026-03-17
+
+### Bug Fixes / 缺陷修复
+
+#### Fix 1 — `--update` mode Stage 6 "Secrets encryption" fails with "No such file or directory" / `--update` 模式第 6 阶段「密钥加密」报错找不到文件
+
+- **Problem / 问题:** When running `install.sh --update`, Stage 6 ("Secrets encryption") attempted to `source` a non-existent file `INLINE_SECRETS_ENCRYPT` from `$CS_LIB_DIR`. This was a placeholder name that was never replaced with the actual script path. The real secrets encryption logic (`setup_secrets_encryption()`) is an inline function defined later in `install.sh` (line 289+) and already runs unconditionally after the update/install if-else block — meaning it was never missing, just incorrectly also referenced as a lib script.
+- **问题描述：** 使用 `install.sh --update` 更新时，第 6 阶段（「密钥加密」）试图 `source` 一个不存在的文件 `INLINE_SECRETS_ENCRYPT`。这是一个从未被替换为实际脚本路径的占位符名称。真正的密钥加密逻辑 `setup_secrets_encryption()` 是 `install.sh` 中的内联函数（第 289 行），在 update/install 的 if-else 块之后已经会无条件执行——功能本身并未缺失，只是被错误地作为外部 lib 脚本重复引用。
+- **Error / 报错:** `main: line 257: /usr/local/lib/openclaw-codeshield/INLINE_SECRETS_ENCRYPT: No such file or directory`
+- **Fix / 修复:** Removed the `run_stage 6 ... "INLINE_SECRETS_ENCRYPT"` line from the `--update` mode block. Secrets encryption continues to run via the inline `setup_secrets_encryption()` function that executes for both install and update modes.
+- **修复方式：** 从 `--update` 模式的代码块中移除 `run_stage 6 ... "INLINE_SECRETS_ENCRYPT"` 调用。密钥加密继续通过内联函数 `setup_secrets_encryption()` 在两种模式下执行。
+- **File changed / 修改文件:** `install.sh` (line 267)
+- **Impact / 影响:** `--update` mode now completes all 7 stages without error. Previously, execution would fail at Stage 6 and skip Stage 7 (Guardian service) and the inline secrets encryption entirely.
+- **影响范围：** `--update` 模式现在可以无错完成所有 7 个阶段。此前执行会在第 6 阶段失败，导致第 7 阶段（Guardian 服务）和内联密钥加密逻辑被完全跳过。
+
+#### Fix 2 — Security audit false failures: hardcoded UID and removed UFW / 安全审计误报：硬编码 UID 和已卸载的 UFW
+
+Three audit checks consistently reported `[FAIL]` on correctly-configured systems due to two root causes:
+
+三项审计检查在配置正确的系统上持续报告 `[FAIL]`，根因有两个：
+
+**Root Cause A: UFW removed by iptables-persistent / 根因 A：UFW 被 iptables-persistent 卸载**
+
+- **Problem / 问题:** The hardening script (`04-hardening.sh`) configures UFW firewall rules, then later installs `iptables-persistent`/`netfilter-persistent` for iptables rule persistence. On Debian/Ubuntu, `iptables-persistent` conflicts with `ufw` and automatically removes it during `apt-get install`. The audit check `"ufw active"` then fails because `ufw` no longer exists on the system.
+- **问题描述：** 加固脚本 (`04-hardening.sh`) 先配置 UFW 防火墙规则，之后安装 `iptables-persistent`/`netfilter-persistent` 以持久化 iptables 规则。在 Debian/Ubuntu 上，`iptables-persistent` 与 `ufw` 包冲突，`apt-get install` 时会自动卸载 UFW。审计检查 `"ufw active"` 因此失败——因为系统上已不存在 `ufw`。
+- **Fix / 修复:** Renamed check to `"firewall active"` and updated the test to accept either UFW (`ufw status | grep 'Status: active'`) or netfilter-persistent (`systemctl is-active netfilter-persistent`).
+- **修复方式：** 将检查项重命名为 `"firewall active"`，测试逻辑改为同时接受 UFW 或 netfilter-persistent 任一防火墙处于活跃状态。
+
+**Root Cause B: Hardcoded UID 997 / 根因 B：硬编码 UID 997**
+
+- **Problem / 问题:** The audit checks for `"dns direct query blocked"` and `"force proxy non-loopback block"` used hardcoded UID `997` in their iptables grep patterns (e.g., `uid-owner.*(997|openclaw-svc)`). However, the `openclaw-svc` user's UID varies by system — on the affected system it was `996`. Since `iptables -S` outputs numeric UIDs (not usernames), the pattern `997` never matched.
+- **问题描述：** `"dns direct query blocked"` 和 `"force proxy non-loopback block"` 两项审计检查在 iptables grep 模式中硬编码了 UID `997`（如 `uid-owner.*(997|openclaw-svc)`）。然而 `openclaw-svc` 用户的 UID 因系统而异——在受影响的系统上为 `996`。由于 `iptables -S` 输出数值 UID（而非用户名），模式 `997` 永远无法匹配。
+- **Fix / 修复:** Both checks now dynamically resolve the UID at runtime via `id -u openclaw-svc` instead of using hardcoded values.
+- **修复方式：** 两项检查现在通过 `id -u openclaw-svc` 在运行时动态获取 UID，不再使用硬编码值。
+- **File changed / 修改文件:** `scripts/security-audit.sh` (lines 92, 119, 257)
+- **Impact / 影响:** All three checks now pass on correctly-configured systems regardless of the assigned UID or firewall backend. Security score on the affected system: **9.1/10 → 10.0/10** (all 54 checks pass).
+- **影响范围：** 三项检查现在在所有配置正确的系统上均通过，不受分配的 UID 或防火墙后端影响。受影响系统的安全评分：**9.1/10 → 10.0/10**（全部 54 项检查通过）。
+
+---
+
 ## [3.0.3] — 2026-03-16
 
 ### New Feature: `codeshield-config` CLI

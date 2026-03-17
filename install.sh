@@ -264,7 +264,8 @@ if [ "$UPDATE_MODE" -eq 1 ]; then
     run_stage 2 "$TOTAL" "Isolation & secrets migration" "02-isolation.sh"
     run_stage 4 "$TOTAL" "System hardening"             "04-hardening.sh"
     run_stage 5 "$TOTAL" "Injection defense"            "05-injection-defense.sh"
-    run_stage 6 "$TOTAL" "Secrets encryption"           "INLINE_SECRETS_ENCRYPT"
+    # Stage 6: Secrets encryption is inline (not a separate lib script)
+    # It runs after the if/else block via setup_secrets_encryption()
     run_stage 7 "$TOTAL" "Guardian service"             "06-guardian.sh"
 else
     if [ "$SKIP_PREFLIGHT" -eq 0 ]; then

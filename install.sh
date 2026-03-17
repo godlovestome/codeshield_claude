@@ -15,6 +15,12 @@ export LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 2>/dev/null || \
     export LC_ALL=C.UTF-8 LANG=C.UTF-8 2>/dev/null || true
 
 ###############################################################################
+# Non-interactive apt: prevent debconf dialogs (e.g. iptables-persistent)
+# when running via curl|bash where stdin is a pipe
+###############################################################################
+export DEBIAN_FRONTEND=noninteractive
+
+###############################################################################
 # Constants
 ###############################################################################
 readonly CS_VERSION="3.0.3"

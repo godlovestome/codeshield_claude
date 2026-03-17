@@ -288,6 +288,9 @@ block_external_outbound() {
 
     if ! command -v netfilter-persistent &>/dev/null; then
         info "Installing netfilter-persistent for iptables rule persistence ..."
+        # Pre-seed debconf to avoid interactive dialog in curl|bash mode
+        echo "iptables-persistent iptables-persistent/autosave_v4 boolean true" | debconf-set-selections 2>/dev/null || true
+        echo "iptables-persistent iptables-persistent/autosave_v6 boolean true" | debconf-set-selections 2>/dev/null || true
         apt-get install -y -qq iptables-persistent 2>/dev/null || true
     fi
     netfilter-persistent save >/dev/null 2>&1 || true

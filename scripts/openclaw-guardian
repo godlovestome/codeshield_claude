@@ -113,6 +113,10 @@ if [ -n "$ACTIVE_SECRETS" ]; then
     # V3.0.9: Include NODE_USE_ENV_PROXY (required for Node.js 22+ undici to
     # respect proxy env vars) and NO_PROXY (prevent loopback services like
     # Qdrant from being routed through Squid).
+    # V3.0.10: Add NODE_OPTIONS with undici ProxyAgent preload.  Even with
+    # NODE_USE_ENV_PROXY=1, web_fetch may bypass the global dispatcher.
+    # The preload forces ALL fetch() calls through ProxyAgent.
+    readonly CS_LIB_DIR="/usr/local/lib/openclaw-codeshield"
     declare -A PROXY_VARS=(
         [HTTPS_PROXY]="http://127.0.0.1:3128"
         [HTTP_PROXY]="http://127.0.0.1:3128"
@@ -121,6 +125,7 @@ if [ -n "$ACTIVE_SECRETS" ]; then
         [NO_PROXY]="127.0.0.1,localhost"
         [no_proxy]="127.0.0.1,localhost"
         [NODE_USE_ENV_PROXY]="1"
+        [NODE_OPTIONS]="--import ${CS_LIB_DIR}/proxy-preload.mjs"
     )
     PROXY_ADDED=0
     for pvar in "${!PROXY_VARS[@]}"; do

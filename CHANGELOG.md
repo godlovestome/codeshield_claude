@@ -4,6 +4,42 @@ All notable changes to CODE SHIELD are documented here.
 
 ---
 
+## [3.0.10] — 2026-03-17
+
+### Fix: web_fetch bypasses proxy despite NODE_USE_ENV_PROXY — undici ProxyAgent preload / 修复：web_fetch 绕过代理——undici ProxyAgent 预加载
+
+**Problem / 问题:** Even with `NODE_USE_ENV_PROXY=1` and all proxy environment variables correctly set (V3.0.9 fix), OpenClaw's `web_fetch` tool still failed to access external URLs. The Squid access log showed **zero entries** for web_fetch requests, while `curl` through the same proxy worked perfectly. This confirmed that web_fetch's HTTP client was bypassing the Squid proxy entirely and hitting the iptables DROP rule.
+
+**即使设置了 `NODE_USE_ENV_PROXY=1` 及所有代理环境变量（V3.0.9 修复），OpenClaw 的 `web_fetch` 工具仍然无法访问外部 URL。Squid 访问日志中 web_fetch 请求记录为零，而通过相同代理的 `curl` 完全正常。这证实 web_fetch 的 HTTP 客户端完全绕过了 Squid 代理，直接触发 iptables DROP 规则。**
+
+**Root cause / 根因:** `NODE_USE_ENV_PROXY=1` only configures the **global undici dispatcher** to respect `HTTP_PROXY`/`HTTPS_PROXY`. However, OpenClaw's web_fetch tool creates its own undici `Client` or `Pool` instance (or uses Node.js `http`/`https` modules directly), which bypasses the global dispatcher. Since iptables blocks all non-loopback traffic from `openclaw-svc`, these requests silently fail with `ETIMEDOUT`.
+
+**`NODE_USE_ENV_PROXY=1` 仅让 undici 的全局 dispatcher 尊重 `HTTP_PROXY`/`HTTPS_PROXY`。但 OpenClaw 的 web_fetch 工具创建了自己的 undici `Client`/`Pool` 实例（或直接使用 Node.js 的 `http`/`https` 模块），绕过了全局 dispatcher。由于 iptables 阻断了 `openclaw-svc` 的所有非回环流量，这些请求以 `ETIMEDOUT` 静默失败。**
+
+**Fix / 修复:** Added a Node.js ESM preload script (`proxy-preload.mjs`) that runs before any application code via `NODE_OPTIONS="--import /usr/local/lib/openclaw-codeshield/proxy-preload.mjs"`. The preload explicitly calls `setGlobalDispatcher(new ProxyAgent(...))` from the bundled `undici` module, forcing **all** `fetch()` calls through the Squid proxy — regardless of whether the caller uses the global dispatcher or not.
+
+**新增 Node.js ESM 预加载脚本 (`proxy-preload.mjs`)，通过 `NODE_OPTIONS="--import ..."` 在任何应用代码之前运行。该脚本显式调用 `setGlobalDispatcher(new ProxyAgent(...))` 强制所有 `fetch()` 调用通过 Squid 代理——无论调用方是否使用全局 dispatcher。**
+
+**Changes / 变更:**
+
+| File / 文件 | Change / 变更 |
+|---|---|
+| `scripts/proxy-preload.mjs` | **New:** Undici ProxyAgent preload script (ESM) / 新增：undici ProxyAgent 预加载脚本 |
+| `lib/04-hardening.sh` | Deploy preload to `/usr/local/lib/openclaw-codeshield/` and add `NODE_OPTIONS` to secrets.env / 部署预加载脚本并添加 NODE_OPTIONS |
+| `scripts/openclaw-guardian` | Add `NODE_OPTIONS` to proxy variables associative array / 在代理变量关联数组中添加 NODE_OPTIONS |
+| `lib/01-collect-secrets.sh` | Include `NODE_OPTIONS` in fresh-install secret generation / 在新安装密钥生成中包含 NODE_OPTIONS |
+| `install.sh` | Bump version to 3.0.10 / 版本号升至 3.0.10 |
+
+**Verification / 验证:** After applying the fix, web_fetch requests appear in the Squid access log (`/var/log/squid/access.log`) as `TCP_TUNNEL/200 CONNECT` entries, confirming they now route through the proxy. Both `httpbin.org/get` and `wttr.in` are accessible via web_fetch.
+
+**修复后，web_fetch 请求以 `TCP_TUNNEL/200 CONNECT` 形式出现在 Squid 访问日志中，确认已通过代理路由。`httpbin.org/get` 和 `wttr.in` 均可通过 web_fetch 访问。**
+
+**Security impact / 安全影响:** Positive. Previously, web_fetch silently failed (no network access at all). Now web_fetch correctly routes through Squid, gaining rate limiting (1MB/s), body size cap (10MB), injection guard URL scanning, and full traffic logging. All 56 audit checks remain passing.
+
+**安全影响：** 正面。此前 web_fetch 静默失败（完全无网络访问）。现在 web_fetch 正确通过 Squid 路由，获得速率限制（1MB/s）、请求体上限（10MB）、注入防护 URL 扫描和全流量日志记录。所有 56 项审计检查继续通过。
+
+---
+
 ## [3.0.9] — 2026-03-17
 
 ### Fix: Guardian proxy variable injection incomplete — OpenClaw cannot access network / 修复：Guardian 代理变量注入不完整——OpenClaw 无法访问网络

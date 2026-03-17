@@ -440,4 +440,56 @@ else
     info "[DRY-RUN] Would harden Docker daemon."
 fi
 
+###############################################################################
+# 9. Deploy undici proxy preload (V3.0.10)
+#    NODE_USE_ENV_PROXY=1 only affects the global undici dispatcher, but
+#    web_fetch may bypass it.  This preload script forces ALL fetch() calls
+#    through ProxyAgent, ensuring Squid is always used.
+###############################################################################
+deploy_proxy_preload() {
+    local PRELOAD_SRC="$CS_LIB_DIR/../codeshield_claude/scripts/proxy-preload.mjs"
+    local PRELOAD_DEST="$CS_LIB_DIR/proxy-preload.mjs"
+
+    # Try installer source first, fall back to repo location
+    if [ -f "$CS_DIR/scripts/proxy-preload.mjs" ]; then
+        PRELOAD_SRC="$CS_DIR/scripts/proxy-preload.mjs"
+    fi
+
+    # Deploy the preload script
+    if [ -f "$PRELOAD_SRC" ]; then
+        cp "$PRELOAD_SRC" "$PRELOAD_DEST"
+    else
+        # Inline fallback: create minimal preload if source not found
+        cat > "$PRELOAD_DEST" << 'PRELOAD'
+import { setGlobalDispatcher, ProxyAgent } from 'undici';
+const p = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+if (p) { try { setGlobalDispatcher(new ProxyAgent(p)); } catch(_) {} }
+PRELOAD
+    fi
+    chmod 0644 "$PRELOAD_DEST"
+    ok "Proxy preload deployed: $PRELOAD_DEST"
+
+    # Add NODE_OPTIONS to secrets.env so openclaw-svc loads the preload
+    local NODE_OPT="--import $PRELOAD_DEST"
+    for sf in "/run/openclaw-codeshield/secrets.env" "$CS_CONF_DIR/secrets.env"; do
+        if [ -f "$sf" ]; then
+            if grep -q "^NODE_OPTIONS=" "$sf" 2>/dev/null; then
+                # Update existing value if it doesn't already contain our preload
+                if ! grep -q "proxy-preload.mjs" "$sf" 2>/dev/null; then
+                    sed -i "s|^NODE_OPTIONS=.*|NODE_OPTIONS=$NODE_OPT|" "$sf"
+                fi
+            else
+                echo "NODE_OPTIONS=$NODE_OPT" >> "$sf"
+            fi
+        fi
+    done
+    ok "NODE_OPTIONS configured for undici proxy preload."
+}
+
+if [ "$DRY_RUN" -eq 0 ]; then
+    deploy_proxy_preload
+else
+    info "[DRY-RUN] Would deploy undici proxy preload."
+fi
+
 ok "System hardening complete."

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CODE SHIELD V3.0.8 -- Configuration Management CLI
+# CODE SHIELD V3.0.9 -- Configuration Management CLI
 # Usage: codeshield-config <command> [args]
 #
 # Commands:
@@ -12,6 +12,7 @@
 #   list-channels            List configured channels
 #   list-models              List configured LLM providers
 #   proxy-allow <domain>     Add a domain to the Squid proxy whitelist
+#   network-mode [open|strict] Show or toggle network access mode
 #   help                     Show this help message
 set -euo pipefail
 export LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 2>/dev/null || export LC_ALL=C.UTF-8 LANG=C.UTF-8 2>/dev/null || true
@@ -963,6 +964,56 @@ cmd_proxy_allow() {
 }
 
 ###############################################################################
+# Command: network-mode
+###############################################################################
+cmd_network_mode() {
+    require_root
+    local mode="${1:-}"
+
+    if [ -z "$mode" ]; then
+        # Show current mode
+        if grep -qE '^\s*http_access allow localnet\s*$' "$SQUID_CONF" 2>/dev/null; then
+            printf "Current network mode: ${GREEN}open${RESET} (all domains allowed through proxy)\n"
+        elif grep -qE '^\s*http_access allow localnet known_api_domains' "$SQUID_CONF" 2>/dev/null; then
+            printf "Current network mode: ${YELLOW}strict${RESET} (known API domains only)\n"
+        else
+            warn "Could not determine current network mode from $SQUID_CONF"
+        fi
+        printf "\nUsage: codeshield-config network-mode <open|strict>\n"
+        printf "  open    Allow all domains through proxy (default, required for web_fetch)\n"
+        printf "  strict  Allow only known API domains (disables web_fetch for arbitrary URLs)\n"
+        return
+    fi
+
+    case "$mode" in
+        open)
+            if grep -qE '^\s*http_access allow localnet known_api_domains' "$SQUID_CONF" 2>/dev/null; then
+                sed -i 's/^\(\s*\)http_access allow localnet known_api_domains/\1http_access allow localnet/' "$SQUID_CONF"
+                reload_squid
+                ok "Network mode set to OPEN. All domains allowed through proxy."
+            else
+                ok "Network mode is already OPEN."
+            fi
+            ;;
+        strict)
+            if grep -qE '^\s*http_access allow localnet\s*$' "$SQUID_CONF" 2>/dev/null; then
+                sed -i 's/^\(\s*\)http_access allow localnet\s*$/\1http_access allow localnet known_api_domains/' "$SQUID_CONF"
+                reload_squid
+                ok "Network mode set to STRICT. Only known API domains allowed."
+                warn "web_fetch and arbitrary URL access will fail for unlisted domains."
+                info "Use 'codeshield-config proxy-allow <domain>' to whitelist additional domains."
+            else
+                ok "Network mode is already STRICT."
+            fi
+            ;;
+        *)
+            fail "Invalid mode: $mode. Use 'open' or 'strict'."
+            exit 1
+            ;;
+    esac
+}
+
+###############################################################################
 # Command: help
 ###############################################################################
 cmd_help() {
@@ -985,6 +1036,9 @@ Commands:
   list-channels              List configured channels
   list-models                List configured LLM providers
   proxy-allow <domain>       Add a domain to the Squid proxy whitelist
+  network-mode [open|strict] Show or toggle network access mode:
+                             open   = all domains through proxy (default)
+                             strict = known API domains only (disables web_fetch)
   help                       Show this help message
 
 Examples:
@@ -996,6 +1050,8 @@ Examples:
   codeshield-config add-channel
   codeshield-config proxy-allow api.example.com
   codeshield-config patch-provider deepseek
+  codeshield-config network-mode              # show current mode
+  codeshield-config network-mode open         # allow all domains
 HELPEOF
 }
 
@@ -1016,6 +1072,7 @@ main() {
         list-channels)  cmd_list_channels ;;
         list-models)    cmd_list_models ;;
         proxy-allow)    cmd_proxy_allow "${1:-}" ;;
+        network-mode)   cmd_network_mode "${1:-}" ;;
         help|--help|-h) cmd_help ;;
         *)
             fail "Unknown command: $cmd"

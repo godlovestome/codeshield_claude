@@ -110,10 +110,22 @@ elif [ -f "$SECRETS_FILE" ]; then
 fi
 
 if [ -n "$ACTIVE_SECRETS" ]; then
+    # V3.0.9: Include NODE_USE_ENV_PROXY (required for Node.js 22+ undici to
+    # respect proxy env vars) and NO_PROXY (prevent loopback services like
+    # Qdrant from being routed through Squid).
+    declare -A PROXY_VARS=(
+        [HTTPS_PROXY]="http://127.0.0.1:3128"
+        [HTTP_PROXY]="http://127.0.0.1:3128"
+        [https_proxy]="http://127.0.0.1:3128"
+        [http_proxy]="http://127.0.0.1:3128"
+        [NO_PROXY]="127.0.0.1,localhost"
+        [no_proxy]="127.0.0.1,localhost"
+        [NODE_USE_ENV_PROXY]="1"
+    )
     PROXY_ADDED=0
-    for pvar in HTTPS_PROXY HTTP_PROXY https_proxy http_proxy; do
+    for pvar in "${!PROXY_VARS[@]}"; do
         if ! grep -qE "^${pvar}=" "$ACTIVE_SECRETS" 2>/dev/null; then
-            echo "${pvar}=http://127.0.0.1:3128" >> "$ACTIVE_SECRETS"
+            echo "${pvar}=${PROXY_VARS[$pvar]}" >> "$ACTIVE_SECRETS"
             PROXY_ADDED=1
         fi
     done

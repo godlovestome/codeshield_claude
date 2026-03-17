@@ -89,8 +89,8 @@ fi
 [ "$QUIET" -eq 0 ] && printf "${BOLD}${DIM} --- Network Security ---${RESET}\n"
 _CURRENT_SECTION="Network Security"
 
-check "ufw active" \
-    "ufw status | grep -q 'Status: active'"
+check "firewall active" \
+    "ufw status 2>/dev/null | grep -q 'Status: active' || systemctl is-active --quiet netfilter-persistent 2>/dev/null"
 
 check "ssh password disabled" \
     "sshd -T 2>/dev/null | grep -i '^passwordauthentication ' | grep -qi 'no'"
@@ -117,7 +117,7 @@ check "docker-user drop rules" \
     "iptables -L DOCKER-USER 2>/dev/null | grep -q DROP"
 
 check "dns direct query blocked" \
-    "iptables -S OUTPUT 2>/dev/null | grep -qE 'uid-owner.*(997|openclaw-svc).*dport 53.*DROP' || iptables -S OUTPUT 2>/dev/null | grep -qE '! -d 127.0.0.0/8.*uid-owner.*(997|openclaw-svc).*DROP'"
+    "SVC_UID=\$(id -u openclaw-svc 2>/dev/null) && iptables -S OUTPUT 2>/dev/null | grep -qE \"uid-owner.*(\$SVC_UID|openclaw-svc).*(dport 53.*DROP|! -d 127.0.0.0/8.*DROP)\""
 
 ###############################################################################
 # ACCESS CONTROL (11)
@@ -255,7 +255,7 @@ check "qdrant no-new-privileges" \
     "docker inspect qdrant-memory 2>/dev/null | python3 -c \"import sys,json; d=json.load(sys.stdin)[0]; opts=d['HostConfig'].get('SecurityOpt') or []; exit(0 if any('no-new-privileges' in o for o in opts) else 1)\" 2>/dev/null"
 
 check "force proxy non-loopback block" \
-    "iptables -S OUTPUT 2>/dev/null | grep -qE '! -d 127.0.0.0/8.*uid-owner.*(997|openclaw-svc).*DROP'"
+    "SVC_UID=\$(id -u openclaw-svc 2>/dev/null) && iptables -S OUTPUT 2>/dev/null | grep -qE \"! -d 127.0.0.0/8.*uid-owner.*(\$SVC_UID|openclaw-svc).*DROP\""
 
 check "openclaw protect system" \
     "systemctl show openclaw.service -p ProtectSystem 2>/dev/null | grep -q 'strict'"

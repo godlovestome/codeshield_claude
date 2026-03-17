@@ -1,14 +1,14 @@
-# CODE SHIELD V3.0.3
+# CODE SHIELD V3.0.4
 
 **AI Agent Network Security Hardening System**
 
-CODE SHIELD V3 is a comprehensive, production-grade security framework designed to protect AI agents running on Linux servers. It provides defense-in-depth through user isolation, secret encryption (systemd-creds), outbound proxy whitelisting, prompt injection detection, container privilege reduction, systemd sandbox hardening, and a guardian service that automatically re-applies protection after agent updates. V3.0.3 adds **`codeshield-config` CLI** for easy post-install configuration management (switch LLM providers, add channels like Feishu/Slack, manage API keys), **multi-LLM support** (OpenAI with OAuth, Anthropic, GLM5 智谱, Kimi 2.5 月之暗面), and comprehensive **deployment reliability fixes** (UTF-8 encoding, checkpoint/resume, install logging). Originally built to harden OpenClaw, CODE SHIELD achieves a security score of **9.5/10** across **56 automated audit checks**.
+CODE SHIELD V3 is a comprehensive, production-grade security framework designed to protect AI agents running on Linux servers. It provides defense-in-depth through user isolation, secret encryption (systemd-creds), outbound proxy whitelisting, prompt injection detection, container privilege reduction, systemd sandbox hardening, and a guardian service that automatically re-applies protection after agent updates. V3.0.4 fixes **`--update` mode failure** (Stage 6 "Secrets encryption" referencing non-existent file), and resolves **three false audit failures** caused by hardcoded UID and UFW/iptables-persistent package conflict. Originally built to harden OpenClaw, CODE SHIELD achieves a security score of **9.5/10** across **56 automated audit checks**.
 
 ---
 
-**CODE SHIELD V3.0.3 -- AI Agent 网络安全加固系统**
+**CODE SHIELD V3.0.4 -- AI Agent 网络安全加固系统**
 
-CODE SHIELD V3 是一套完整的生产级安全框架，专为运行在 Linux 服务器上的 AI Agent 设计。V3.0.3 新增 **`codeshield-config` 配置管理 CLI**，无需重新运行 `openclaw onboard`，即可轻松切换大模型（OpenAI/Anthropic/GLM5/Kimi 2.5）、添加通道（飞书、Slack 等）、管理 API 密钥。支持 OpenAI OAuth 认证和 API Key 两种模式。同时修复了部署过程中的 Unicode/UTF-8 编码问题，增加了断点续装（`--resume`）和安装日志功能，大幅提升一行代码部署的可靠性。本系统通过 **56 项**自动化安全审计实现 **9.5/10** 的安全评分。
+CODE SHIELD V3 是一套完整的生产级安全框架，专为运行在 Linux 服务器上的 AI Agent 设计。V3.0.4 修复了 **`--update` 模式执行失败**（第 6 阶段「密钥加密」引用不存在的占位符文件），并解决了**三项安全审计误报**——由硬编码 UID 和 UFW/iptables-persistent 包冲突引起。本系统通过 **56 项**自动化安全审计实现 **9.5/10** 的安全评分。
 
 ---
 
@@ -169,7 +169,7 @@ security-audit.sh
 ### 56-Item Checklist / 56 项检查清单
 
 **Network Security (10)**
-- ufw active
+- firewall active (UFW or netfilter-persistent)
 - ssh password disabled
 - ssh keyboard-interactive disabled
 - root key-only login
@@ -251,7 +251,7 @@ security-audit.sh
 ### Sample Output
 
 ```
- [PASS] ufw active
+ [PASS] firewall active
  [PASS] ssh password disabled
  ...
  [PASS] secrets encrypted at rest
@@ -365,7 +365,8 @@ final_score = min(base + pass_bonus + extra_bonus, 10.0)
 | V3.0.0  | 38/38           | 9.3/10 |
 | V3.0.1  | 42/42           | 9.3/10 |
 | V3.0.2  | 56/56           | 9.5/10 |
-| **V3.0.3** | **56/56**   | **9.5/10** |
+| V3.0.3  | 56/56           | 9.5/10 |
+| **V3.0.4** | **56/56**   | **9.5/10** |
 
 Professional audit score (manual review): **~9.0/10** (up from 7.3 in V3.0.0)
 
@@ -422,6 +423,18 @@ codeshield-v3/
 ---
 
 ## Changelog / 版本历史
+
+### V3.0.4 (2026-03-17) — Update Mode & Audit Reliability Fixes / 更新模式与审计可靠性修复
+
+**Fix 1: `--update` mode Stage 6 failure / 修复 1：`--update` 模式第 6 阶段失败**
+- `install.sh --update` 的第 6 阶段尝试 `source` 一个不存在的占位符文件 `INLINE_SECRETS_ENCRYPT`，导致执行中断并跳过后续的 Guardian 服务和密钥加密。已移除该错误引用——密钥加密通过内联函数 `setup_secrets_encryption()` 在两种模式下均正常执行。
+- Stage 6 in `--update` mode tried to `source` a non-existent placeholder file `INLINE_SECRETS_ENCRYPT`, causing execution to abort and skip Guardian service installation and secrets encryption. Removed the broken reference — secrets encryption runs via the inline `setup_secrets_encryption()` function in both install and update modes.
+
+**Fix 2: Three false audit failures / 修复 2：三项审计误报**
+- **`ufw active` → `firewall active`：** 加固脚本安装 `iptables-persistent` 时自动卸载 UFW（Debian 包冲突），导致审计检查永远失败。现已改为同时接受 UFW 或 `netfilter-persistent` 任一防火墙。
+- **`ufw active` → `firewall active`:** The hardening script installs `iptables-persistent` which auto-removes UFW (Debian package conflict), causing the audit check to always fail. Now accepts either UFW or `netfilter-persistent`.
+- **`dns direct query blocked` + `force proxy non-loopback block`：** 审计脚本硬编码 UID `997`，但 `openclaw-svc` 的 UID 因系统而异（如 `996`）。现已改为运行时通过 `id -u openclaw-svc` 动态获取。
+- **`dns direct query blocked` + `force proxy non-loopback block`:** Audit checks hardcoded UID `997`, but `openclaw-svc` UID varies by system (e.g., `996`). Now dynamically resolved via `id -u openclaw-svc` at runtime.
 
 ### V3.0.3 (2026-03-16) — Configuration Management & Deployment Reliability / 配置管理与部署可靠性
 

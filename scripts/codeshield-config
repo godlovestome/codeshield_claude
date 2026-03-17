@@ -98,7 +98,7 @@ reencrypt_secrets() {
 read_secret() {
     local key="$1"
     if [ -f "$SECRETS_FILE" ]; then
-        grep -E "^${key}=" "$SECRETS_FILE" 2>/dev/null | head -1 | cut -d'=' -f2-
+        grep -E "^${key}=" "$SECRETS_FILE" 2>/dev/null | head -1 | cut -d'=' -f2- || true
     fi
 }
 

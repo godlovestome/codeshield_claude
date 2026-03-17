@@ -1,14 +1,14 @@
-# CODE SHIELD V3.0.9
+# CODE SHIELD V3.0.10
 
 **AI Agent Network Security Hardening System**
 
-CODE SHIELD V3 is a comprehensive, production-grade security framework designed to protect AI agents running on Linux servers. It provides defense-in-depth through user isolation, secret encryption (systemd-creds), outbound proxy whitelisting, prompt injection detection, container privilege reduction, systemd sandbox hardening, and a guardian service that automatically re-applies protection after agent updates. V3.0.8 adds automatic openclaw JS patching in `codeshield-config add-model` for non-native providers (DeepSeek, GLM5) — no manual file editing required after openclaw updates. V3.0.9 fixes OpenClaw network access by adding missing `NODE_USE_ENV_PROXY` and `NO_PROXY` to the guardian proxy injection, and adds `codeshield-config network-mode` for toggling between open and strict domain enforcement. Originally built to harden OpenClaw, CODE SHIELD achieves a security score of **9.5/10** across **56 automated audit checks**.
+CODE SHIELD V3 is a comprehensive, production-grade security framework designed to protect AI agents running on Linux servers. It provides defense-in-depth through user isolation, secret encryption (systemd-creds), outbound proxy whitelisting, prompt injection detection, container privilege reduction, systemd sandbox hardening, and a guardian service that automatically re-applies protection after agent updates. V3.0.10 fixes web_fetch proxy bypass by adding a Node.js undici ProxyAgent preload (`proxy-preload.mjs`) via `NODE_OPTIONS`, ensuring all `fetch()` calls route through Squid — even when the HTTP client bypasses the global undici dispatcher. Originally built to harden OpenClaw, CODE SHIELD achieves a security score of **9.5/10** across **56 automated audit checks**.
 
 ---
 
-**CODE SHIELD V3.0.9 -- AI Agent 网络安全加固系统**
+**CODE SHIELD V3.0.10 -- AI Agent 网络安全加固系统**
 
-CODE SHIELD V3 是一套完整的生产级安全框架，专为运行在 Linux 服务器上的 AI Agent 设计。V3.0.8 新增 `codeshield-config add-model deepseek` 自动修补 OpenClaw JS 文件、注册 DeepSeek 提供商支持，同时新增 `patch-provider` 命令供 OpenClaw 更新后手动重新修补。V3.0.9 修复 OpenClaw 网络访问：在 Guardian 代理变量注入中补全 `NODE_USE_ENV_PROXY` 和 `NO_PROXY`，新增 `codeshield-config network-mode` 命令用于切换开放/严格域名模式。本系统通过 **56 项**自动化安全审计实现 **9.5/10** 的安全评分。
+CODE SHIELD V3 是一套完整的生产级安全框架，专为运行在 Linux 服务器上的 AI Agent 设计。V3.0.10 修复 web_fetch 绕过代理问题：通过 `NODE_OPTIONS` 添加 Node.js undici ProxyAgent 预加载脚本（`proxy-preload.mjs`），确保所有 `fetch()` 调用通过 Squid 路由——即使 HTTP 客户端绕过了全局 undici dispatcher。本系统通过 **56 项**自动化安全审计实现 **9.5/10** 的安全评分。
 
 ---
 

@@ -190,6 +190,8 @@ else
         # non-loopback), so all outbound traffic must go through the Squid proxy.
         # NODE_USE_ENV_PROXY=1: forces Node.js 22+ built-in fetch (undici) to
         # respect HTTP_PROXY/HTTPS_PROXY, enabling web_fetch and tool calls.
+        # NODE_OPTIONS: preloads undici ProxyAgent so web_fetch goes through
+        # Squid even if it bypasses the global dispatcher (V3.0.10).
         printf '# Proxy (required for network-isolated openclaw-svc)\n'
         printf 'HTTPS_PROXY=http://127.0.0.1:3128\n'
         printf 'HTTP_PROXY=http://127.0.0.1:3128\n'
@@ -198,6 +200,7 @@ else
         printf 'NODE_USE_ENV_PROXY=1\n'
         printf 'NO_PROXY=127.0.0.1,localhost\n'
         printf 'no_proxy=127.0.0.1,localhost\n'
+        printf 'NODE_OPTIONS=--import /usr/local/lib/openclaw-codeshield/proxy-preload.mjs\n'
     } > "$SECRETS_FILE"
 
     chmod 0600 "$SECRETS_FILE"

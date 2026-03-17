@@ -76,6 +76,18 @@
       "max_calls_per_hour": 120
     },
     {
+      "name": "deepseek-chat",
+      "description": "Chat completions via DeepSeek API",
+      "allowed_endpoints": ["api.deepseek.com"],
+      "max_calls_per_hour": 120
+    },
+    {
+      "name": "minimax-chat",
+      "description": "Chat completions via MiniMax API",
+      "allowed_endpoints": ["api.minimax.io"],
+      "max_calls_per_hour": 120
+    },
+    {
       "name": "channel-send",
       "description": "Send messages via configured channel (generic)",
       "allowed_endpoints": ["*"],

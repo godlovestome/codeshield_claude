@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# CODE SHIELD V3 -- Configuration Management CLI
+# CODE SHIELD V3.0.6 -- Configuration Management CLI
 # Usage: codeshield-config <command> [args]
 #
 # Commands:
 #   show                     Show current configuration (secrets masked)
 #   edit                     Interactive edit of all secrets
 #   set KEY=VALUE            Set a single configuration key
-#   add-channel              Interactive: add a new messaging channel
-#   add-model [provider]     Add an LLM provider (openai|anthropic|glm5|kimi|custom)
+#   add-channel              Interactive: add a messaging channel (WeCom/Feishu/Discord/Custom)
+#   add-model [provider]     Add an LLM provider (openai|anthropic|deepseek|glm5|kimi|minimax|custom)
 #   list-channels            List configured channels
 #   list-models              List configured LLM providers
 #   proxy-allow <domain>     Add a domain to the Squid proxy whitelist
@@ -316,65 +316,115 @@ cmd_add_channel() {
     ensure_dirs
     decrypt_secrets
 
-    printf "\n${BOLD}${CYAN}=== Add New Channel ===${RESET}\n\n"
+    # Built-in channel definitions
+    declare -A BUILTIN_CH_NAMES=(
+        [wecom]="企业微信 (WeCom)"
+        [feishu]="飞书 (Feishu)"
+        [discord]="Discord"
+    )
+    declare -A BUILTIN_CH_DOMAINS=(
+        [wecom]="qyapi.weixin.qq.com"
+        [feishu]="open.feishu.cn"
+        [discord]="discord.com,cdn.discordapp.com"
+    )
+    declare -A BUILTIN_CH_VARS=(
+        [wecom]="WECOM_CORP_ID,WECOM_AGENT_ID,WECOM_SECRET"
+        [feishu]="FEISHU_APP_ID,FEISHU_APP_SECRET"
+        [discord]="DISCORD_BOT_TOKEN,DISCORD_WEBHOOK_URL"
+    )
 
-    # Channel name
-    printf "${BOLD}Channel name${RESET} (e.g. feishu, slack, discord, wechat): " >/dev/tty
-    local name
-    read -r name </dev/tty
-    if [ -z "$name" ]; then
-        fail "Channel name is required."
-        exit 1
+    printf "\n${BOLD}${CYAN}=== Add New Channel / 添加通道 ===${RESET}\n\n"
+    printf "Select a channel type:\n"
+    printf "  ${BOLD}1${RESET}) 企业微信 (WeCom)\n"
+    printf "  ${BOLD}2${RESET}) 飞书 (Feishu)\n"
+    printf "  ${BOLD}3${RESET}) Discord\n"
+    printf "  ${BOLD}4${RESET}) Custom (自定义)\n"
+    printf "\nChoice [1-4]: " >/dev/tty
+    local ch_choice
+    read -r ch_choice </dev/tty
+
+    local name domains varnames
+    local channel_key=""
+
+    case "$ch_choice" in
+        1) channel_key="wecom" ;;
+        2) channel_key="feishu" ;;
+        3) channel_key="discord" ;;
+        4) channel_key="custom" ;;
+        *) fail "Invalid choice."; exit 1 ;;
+    esac
+
+    if [ "$channel_key" != "custom" ]; then
+        name="${BUILTIN_CH_NAMES[$channel_key]}"
+        domains="${BUILTIN_CH_DOMAINS[$channel_key]}"
+        varnames="${BUILTIN_CH_VARS[$channel_key]}"
+        printf "\n${BOLD}Adding: %s${RESET}\n" "$name"
+        printf "  Domains: %s\n" "$domains"
+        printf "  Variables: %s\n\n" "$varnames"
+    else
+        # Custom channel: manual input
+        printf "\n${BOLD}Channel name${RESET} (e.g. slack, dingtalk, telegram): " >/dev/tty
+        read -r name </dev/tty
+        if [ -z "$name" ]; then
+            fail "Channel name is required."
+            exit 1
+        fi
+
+        printf "${BOLD}API domains${RESET} (comma-separated, e.g. api.slack.com,hooks.slack.com): " >/dev/tty
+        read -r domains </dev/tty
+        if [ -z "$domains" ]; then
+            fail "At least one domain is required."
+            exit 1
+        fi
+
+        while true; do
+            printf "${BOLD}Environment variable names${RESET} (comma-separated, e.g. SLACK_BOT_TOKEN,SLACK_WEBHOOK_URL): " >/dev/tty
+            read -r varnames </dev/tty
+
+            if [ -n "$varnames" ]; then
+                local valid=1
+                IFS=',' read -ra check_vars <<< "$varnames"
+                for cv in "${check_vars[@]}"; do
+                    cv=$(printf '%s' "$cv" | tr -d ' ')
+                    if ! printf '%s' "$cv" | grep -qE '^[A-Za-z_][A-Za-z0-9_]*$'; then
+                        fail "Invalid variable name: '$cv'" >/dev/tty
+                        fail "Variable names must contain only letters, digits, and underscores (e.g. TELEGRAM_BOT_TOKEN)." >/dev/tty
+                        fail "Do NOT enter the actual secret value here — only the variable NAME." >/dev/tty
+                        valid=0
+                        break
+                    fi
+                done
+                [ "$valid" -eq 1 ] && break
+            else
+                break
+            fi
+        done
     fi
+
     # Sanitize name for filename
     local safename
-    safename=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')
+    if [ "$channel_key" != "custom" ]; then
+        safename="$channel_key"
+    else
+        safename=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')
+    fi
 
     if [ -f "$CHANNELS_DIR/${safename}.conf" ]; then
         warn "Channel '$safename' already exists. Overwriting."
     fi
-
-    # Domains
-    printf "${BOLD}API domains${RESET} (comma-separated, e.g. open.feishu.cn,oapi.dingtalk.com): " >/dev/tty
-    local domains
-    read -r domains </dev/tty
-    if [ -z "$domains" ]; then
-        fail "At least one domain is required."
-        exit 1
-    fi
-
-    # Environment variable names
-    local varnames
-    while true; do
-        printf "${BOLD}Environment variable names${RESET} (comma-separated, e.g. FEISHU_APP_ID,FEISHU_APP_SECRET): " >/dev/tty
-        read -r varnames </dev/tty
-
-        # Validate: each name must look like an env var (UPPER_CASE_WITH_DIGITS)
-        if [ -n "$varnames" ]; then
-            local valid=1
-            IFS=',' read -ra check_vars <<< "$varnames"
-            for cv in "${check_vars[@]}"; do
-                cv=$(printf '%s' "$cv" | tr -d ' ')
-                if ! printf '%s' "$cv" | grep -qE '^[A-Za-z_][A-Za-z0-9_]*$'; then
-                    fail "Invalid variable name: '$cv'" >/dev/tty
-                    fail "Variable names must contain only letters, digits, and underscores (e.g. TELEGRAM_BOT_TOKEN)." >/dev/tty
-                    fail "Do NOT enter the actual secret value here — only the variable NAME." >/dev/tty
-                    valid=0
-                    break
-                fi
-            done
-            [ "$valid" -eq 1 ] && break
-        else
-            break
-        fi
-    done
 
     # Collect values for each variable
     if [ -n "$varnames" ]; then
         IFS=',' read -ra vars <<< "$varnames"
         for var in "${vars[@]}"; do
             var=$(printf '%s' "$var" | tr -d ' ')
-            printf "  ${BOLD}%s${RESET}: " "$var" >/dev/tty
+            local existing
+            existing=$(read_secret "$var")
+            if [ -n "$existing" ]; then
+                printf "  ${BOLD}%s${RESET} [current: %s] (Enter to keep): " "$var" "$(mask_secret "$existing")" >/dev/tty
+            else
+                printf "  ${BOLD}%s${RESET}: " "$var" >/dev/tty
+            fi
             local val
             read -r val </dev/tty
             if [ -n "$val" ]; then
@@ -422,51 +472,63 @@ cmd_add_model() {
     declare -A BUILTIN_NAMES=(
         [openai]="OpenAI"
         [openai-oauth]="OpenAI (OAuth)"
-        [anthropic]="Anthropic"
+        [anthropic]="Anthropic / Claude"
+        [deepseek]="DeepSeek (深度求索)"
         [glm5]="GLM5 (智谱 BigModel)"
-        [kimi]="Kimi 2.5 (月之暗面 Moonshot)"
+        [kimi]="Kimi (月之暗面 Moonshot)"
+        [minimax]="MiniMax"
     )
     declare -A BUILTIN_DOMAINS=(
         [openai]="api.openai.com"
         [openai-oauth]="api.openai.com,auth0.openai.com"
         [anthropic]="api.anthropic.com"
+        [deepseek]="api.deepseek.com"
         [glm5]="open.bigmodel.cn"
         [kimi]="api.moonshot.cn"
+        [minimax]="api.minimax.io"
     )
     declare -A BUILTIN_VARS=(
         [openai]="OPENAI_API_KEY"
         [openai-oauth]="OPENAI_CLIENT_ID,OPENAI_CLIENT_SECRET,OPENAI_ORG_ID"
         [anthropic]="ANTHROPIC_API_KEY"
+        [deepseek]="DEEPSEEK_API_KEY"
         [glm5]="GLM_API_KEY"
         [kimi]="KIMI_API_KEY"
+        [minimax]="MINIMAX_API_KEY,MINIMAX_GROUP_ID"
     )
     declare -A BUILTIN_AUTH=(
         [openai]="apikey"
         [openai-oauth]="oauth"
         [anthropic]="apikey"
+        [deepseek]="apikey"
         [glm5]="apikey"
         [kimi]="apikey"
+        [minimax]="apikey"
     )
 
     if [ -z "$provider" ]; then
-        printf "\n${BOLD}${CYAN}=== Add LLM Provider ===${RESET}\n\n"
+        printf "\n${BOLD}${CYAN}=== Add LLM Provider / 添加大模型 ===${RESET}\n\n"
         printf "Select a provider:\n"
         printf "  ${BOLD}1${RESET}) OpenAI (API Key)\n"
         printf "  ${BOLD}2${RESET}) OpenAI (OAuth)\n"
-        printf "  ${BOLD}3${RESET}) Anthropic\n"
-        printf "  ${BOLD}4${RESET}) GLM5 (智谱 BigModel)\n"
-        printf "  ${BOLD}5${RESET}) Kimi 2.5 (月之暗面 Moonshot)\n"
-        printf "  ${BOLD}6${RESET}) Custom (自定义)\n"
-        printf "\nChoice [1-6]: " >/dev/tty
+        printf "  ${BOLD}3${RESET}) Anthropic / Claude\n"
+        printf "  ${BOLD}4${RESET}) DeepSeek (深度求索)\n"
+        printf "  ${BOLD}5${RESET}) GLM5 (智谱 BigModel)\n"
+        printf "  ${BOLD}6${RESET}) Kimi (月之暗面 Moonshot)\n"
+        printf "  ${BOLD}7${RESET}) MiniMax\n"
+        printf "  ${BOLD}8${RESET}) Custom (自定义)\n"
+        printf "\nChoice [1-8]: " >/dev/tty
         local choice
         read -r choice </dev/tty
         case "$choice" in
             1) provider="openai" ;;
             2) provider="openai-oauth" ;;
             3) provider="anthropic" ;;
-            4) provider="glm5" ;;
-            5) provider="kimi" ;;
-            6) provider="custom" ;;
+            4) provider="deepseek" ;;
+            5) provider="glm5" ;;
+            6) provider="kimi" ;;
+            7) provider="minimax" ;;
+            8) provider="custom" ;;
             *) fail "Invalid choice."; exit 1 ;;
         esac
     fi
@@ -632,9 +694,9 @@ Commands:
   show                     Show current configuration (secrets masked)
   edit                     Interactive edit of all secrets
   set KEY=VALUE            Set a single configuration key
-  add-channel              Interactive: add a new messaging channel
-  add-model [provider]     Add an LLM provider
-                           Providers: openai, openai-oauth, anthropic, glm5, kimi, custom
+  add-channel              Interactive: add a messaging channel (WeCom/Feishu/Discord/Custom)
+  add-model [provider]     Add an LLM provider (interactive menu)
+                           Providers: openai, openai-oauth, anthropic, deepseek, glm5, kimi, minimax, custom
   list-channels            List configured channels
   list-models              List configured LLM providers
   proxy-allow <domain>     Add a domain to the Squid proxy whitelist
@@ -644,7 +706,8 @@ Examples:
   codeshield-config show
   codeshield-config set ANTHROPIC_API_KEY=sk-ant-xxx
   codeshield-config add-model anthropic
-  codeshield-config add-model glm5
+  codeshield-config add-model deepseek
+  codeshield-config add-model minimax
   codeshield-config add-channel
   codeshield-config proxy-allow api.example.com
 HELPEOF

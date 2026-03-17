@@ -1,14 +1,14 @@
-# CODE SHIELD V3.0.5
+# CODE SHIELD V3.0.6
 
 **AI Agent Network Security Hardening System**
 
-CODE SHIELD V3 is a comprehensive, production-grade security framework designed to protect AI agents running on Linux servers. It provides defense-in-depth through user isolation, secret encryption (systemd-creds), outbound proxy whitelisting, prompt injection detection, container privilege reduction, systemd sandbox hardening, and a guardian service that automatically re-applies protection after agent updates. V3.0.5 fixes the last remaining audit false failure — `dns direct query blocked` — caused by `iptables -S` output normalization reordering fields vs. the regex pattern, and ensures the scoring bonus correctly recognizes `netfilter-persistent` as a valid firewall. Originally built to harden OpenClaw, CODE SHIELD achieves a security score of **9.5/10** across **56 automated audit checks**.
+CODE SHIELD V3 is a comprehensive, production-grade security framework designed to protect AI agents running on Linux servers. It provides defense-in-depth through user isolation, secret encryption (systemd-creds), outbound proxy whitelisting, prompt injection detection, container privilege reduction, systemd sandbox hardening, and a guardian service that automatically re-applies protection after agent updates. V3.0.6 adds interactive menu-based selection for LLM providers (DeepSeek, MiniMax added; no manual domain input required) and built-in channel presets for WeCom, Feishu, and Discord. Originally built to harden OpenClaw, CODE SHIELD achieves a security score of **9.5/10** across **56 automated audit checks**.
 
 ---
 
-**CODE SHIELD V3.0.5 -- AI Agent 网络安全加固系统**
+**CODE SHIELD V3.0.6 -- AI Agent 网络安全加固系统**
 
-CODE SHIELD V3 是一套完整的生产级安全框架，专为运行在 Linux 服务器上的 AI Agent 设计。V3.0.5 修复了最后一个审计误报 `dns direct query blocked`——由 `iptables -S` 输出归一化导致字段顺序与正则表达式不匹配引起；同时修复评分加分逻辑以正确识别 `netfilter-persistent` 为有效防火墙。本系统通过 **56 项**自动化安全审计实现 **9.5/10** 的安全评分。
+CODE SHIELD V3 是一套完整的生产级安全框架，专为运行在 Linux 服务器上的 AI Agent 设计。V3.0.6 新增大模型交互式菜单选择（新增 DeepSeek、MiniMax；无需手动输入域名）以及企业微信、飞书、Discord 内置通道预设。本系统通过 **56 项**自动化安全审计实现 **9.5/10** 的安全评分。
 
 ---
 
@@ -25,7 +25,7 @@ curl -fsSL https://raw.githubusercontent.com/godlovestome/codeshield_claude/main
 
 The installer is interactive only when collecting API keys (Telegram, Brave, OpenAI, Anthropic, GLM5, Kimi 2.5, Qdrant). Everything else runs fully automatically. After installation, use `codeshield-config` to manage configuration without re-running the installer.
 
-安装程序仅在收集 API 密钥时暂停交互，其余全部自动执行。安装后可使用 `codeshield-config` 管理配置，无需重新运行安装程序。
+安装程序仅在收集 API 密钥时暂停交互（Telegram、Brave、OpenAI、Anthropic、DeepSeek、GLM5、Kimi、MiniMax、Qdrant），其余全部自动执行。安装后可使用 `codeshield-config` 管理配置，无需重新运行安装程序。
 
 ---
 
@@ -48,56 +48,72 @@ The installer is interactive only when collecting API keys (Telegram, Brave, Ope
 
 ---
 
-## Configuration Management / 配置管理 (V3.0.3)
+## Configuration Management / 配置管理 (V3.0.6)
 
-After installation, use `codeshield-config` to manage all settings without re-running the installer or `openclaw onboard`:
+After installation, use `codeshield-config` to manage all settings without re-running the installer or `openclaw onboard`. All built-in providers and channels use **interactive menus** — no manual domain input required.
 
-安装后使用 `codeshield-config` 管理所有设置，无需重新运行安装程序或 `openclaw onboard`：
+安装后使用 `codeshield-config` 管理所有设置，无需重新运行安装程序或 `openclaw onboard`。所有内置提供商和通道均使用**交互式菜单**——无需手动输入域名。
 
 ```bash
 # View current configuration (secrets masked)
+# 查看当前配置（密钥脱敏显示）
 codeshield-config show
 
-# Set a single key
+# Set a single key / 设置单个配置项
 codeshield-config set ANTHROPIC_API_KEY=sk-ant-xxx
 
-# Interactive edit all secrets
+# Interactive edit all secrets / 交互式编辑所有密钥
 codeshield-config edit
 
-# Add an LLM provider (interactive menu)
+# Add an LLM provider (interactive menu, domains auto-filled)
+# 添加大模型提供商（交互式菜单，域名自动填充）
 codeshield-config add-model
-#   1) OpenAI (API Key)    2) OpenAI (OAuth)
-#   3) Anthropic           4) GLM5 (智谱)
-#   5) Kimi 2.5 (月之暗面)  6) Custom
+#   1) OpenAI (API Key)       2) OpenAI (OAuth)
+#   3) Anthropic / Claude     4) DeepSeek (深度求索)
+#   5) GLM5 (智谱 BigModel)   6) Kimi (月之暗面 Moonshot)
+#   7) MiniMax                8) Custom (自定义)
 
-# Add a messaging channel (e.g. Feishu, Slack, Discord)
+# Add a messaging channel (interactive menu, domains auto-filled)
+# 添加消息通道（交互式菜单，域名自动填充）
 codeshield-config add-channel
-#   Prompts for: channel name, API domains, env var names, values
+#   1) 企业微信 (WeCom)    2) 飞书 (Feishu)
+#   3) Discord             4) Custom (自定义)
 
-# Add a domain to Squid proxy whitelist
+# Add a domain to Squid proxy whitelist / 添加域名到 Squid 白名单
 codeshield-config proxy-allow open.feishu.cn
 
-# List configured channels and models
+# List configured channels and models / 列出已配置的通道和模型
 codeshield-config list-channels
 codeshield-config list-models
 ```
 
-**Key behaviors:**
-- Automatically decrypts secrets → modifies → re-encrypts (systemd-creds)
-- Automatically updates Squid proxy whitelist when adding channels/models
-- Automatically restarts openclaw.service after changes
+**Key behaviors / 核心行为:**
+- Automatically decrypts secrets → modifies → re-encrypts (systemd-creds) / 自动解密 → 修改 → 重新加密
+- Automatically updates Squid proxy whitelist when adding channels/models / 添加通道/模型时自动更新 Squid 白名单
+- Automatically restarts openclaw.service after changes / 修改后自动重启 openclaw 服务
 - Channel and model configs stored in `/etc/openclaw-codeshield/channels.d/` and `models.d/`
 
-**Supported LLM Providers (built-in):**
+**Supported LLM Providers (built-in) / 支持的大模型提供商（内置）:**
 
-| Provider | API Domain | Auth | Env Vars |
+| Provider / 提供商 | API Domain | Auth / 认证方式 | Env Vars / 环境变量 |
 |----------|-----------|------|----------|
 | OpenAI | `api.openai.com` | API Key | `OPENAI_API_KEY` |
 | OpenAI OAuth | `api.openai.com`, `auth0.openai.com` | OAuth 2.0 | `OPENAI_CLIENT_ID`, `OPENAI_CLIENT_SECRET`, `OPENAI_ORG_ID` |
-| Anthropic | `api.anthropic.com` | API Key | `ANTHROPIC_API_KEY` |
-| GLM5 (智谱) | `open.bigmodel.cn` | API Key | `GLM_API_KEY` |
-| Kimi 2.5 (月之暗面) | `api.moonshot.cn` | API Key | `KIMI_API_KEY` |
-| Custom | User-defined | User-defined | User-defined |
+| Anthropic / Claude | `api.anthropic.com` | API Key | `ANTHROPIC_API_KEY` |
+| DeepSeek (深度求索) | `api.deepseek.com` | API Key | `DEEPSEEK_API_KEY` |
+| GLM5 (智谱 BigModel) | `open.bigmodel.cn` | API Key | `GLM_API_KEY` |
+| Kimi (月之暗面 Moonshot) | `api.moonshot.cn` | API Key | `KIMI_API_KEY` |
+| MiniMax | `api.minimax.io` | API Key | `MINIMAX_API_KEY`, `MINIMAX_GROUP_ID` |
+| Custom / 自定义 | User-defined | User-defined | User-defined |
+
+**Supported Channels (built-in) / 支持的消息通道（内置）:**
+
+| Channel / 通道 | API Domain | Env Vars / 环境变量 |
+|---------|-----------|----------|
+| 企业微信 (WeCom) | `qyapi.weixin.qq.com` | `WECOM_CORP_ID`, `WECOM_AGENT_ID`, `WECOM_SECRET` |
+| 飞书 (Feishu) | `open.feishu.cn` | `FEISHU_APP_ID`, `FEISHU_APP_SECRET` |
+| Discord | `discord.com`, `cdn.discordapp.com` | `DISCORD_BOT_TOKEN`, `DISCORD_WEBHOOK_URL` |
+| Custom / 自定义 | User-defined | User-defined |
 
 ---
 
@@ -367,7 +383,8 @@ final_score = min(base + pass_bonus + extra_bonus, 10.0)
 | V3.0.2  | 56/56           | 9.5/10 |
 | V3.0.3  | 56/56           | 9.5/10 |
 | V3.0.4  | 56/56           | 9.5/10 |
-| **V3.0.5** | **56/56**   | **9.5/10** |
+| V3.0.5  | 56/56           | 9.5/10 |
+| **V3.0.6** | **56/56**   | **9.5/10** |
 
 Professional audit score (manual review): **~9.0/10** (up from 7.3 in V3.0.0)
 
@@ -387,7 +404,7 @@ codeshield-v3/
 |   |-- 05-injection-defense.sh   # Prompt injection defense
 |   `-- 06-guardian.sh            # Guardian watchdog service
 |-- scripts/
-|   |-- codeshield-config         # Configuration management CLI (V3.0.3)
+|   |-- codeshield-config         # Configuration management CLI (V3.0.6)
 |   |-- security-audit.sh         # 56-item security audit
 |   |-- openclaw-injection-scan   # Session injection scanner
 |   |-- openclaw-cost-monitor     # API cost monitoring
@@ -424,6 +441,24 @@ codeshield-v3/
 ---
 
 ## Changelog / 版本历史
+
+### V3.0.6 (2026-03-17) — Interactive Menu Selection & New Providers / 交互式菜单选择与新增提供商
+
+**New: Interactive Menu-Based LLM Provider Selection / 新增：交互式菜单大模型选择**
+- `codeshield-config add-model` now shows a numbered menu (8 choices) with all domains and env vars pre-filled — **no manual domain input required**, eliminating typo errors.
+- `codeshield-config add-model` 现在显示编号菜单（8 个选项），所有域名和环境变量自动填充——**无需手动输入域名**，杜绝拼写错误。
+- **New providers / 新增提供商:** DeepSeek (`api.deepseek.com`), MiniMax (`api.minimax.io`)
+- **Updated providers / 更新提供商:** Anthropic renamed to "Anthropic / Claude", Kimi renamed to "Kimi (月之暗面 Moonshot)"
+
+**New: Built-in Channel Presets / 新增：内置通道预设**
+- `codeshield-config add-channel` now shows a numbered menu (4 choices) with built-in presets for common channels — **no manual domain/variable input required**.
+- `codeshield-config add-channel` 现在显示编号菜单（4 个选项），内置常用通道预设——**无需手动输入域名和变量名**。
+- **Built-in channels / 内置通道:** 企业微信 WeCom (`qyapi.weixin.qq.com`), 飞书 Feishu (`open.feishu.cn`), Discord (`discord.com`)
+- Custom channel option retained for user-defined channels / 保留自定义通道选项
+
+**Skills Policy Update / 技能策略更新**
+- Added `deepseek-chat` and `minimax-chat` to approved skills list
+- 新增 `deepseek-chat` 和 `minimax-chat` 到已批准技能列表
 
 ### V3.0.5 (2026-03-17) — DNS Audit Check & Scoring Fix / DNS 审计检查与评分修复
 

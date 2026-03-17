@@ -1,0 +1,41 @@
+name: ShellCheck
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  shellcheck:
+    name: ShellCheck Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: sudo apt-get install -y shellcheck
+
+      - name: Run ShellCheck on install.sh
+        run: shellcheck -S warning install.sh
+
+      - name: Run ShellCheck on lib/ scripts
+        run: |
+          for f in lib/*.sh; do
+            echo "Checking $f ..."
+            shellcheck -S warning -e SC1091 "$f"
+          done
+
+      - name: Run ShellCheck on scripts/ (bash scripts)
+        run: |
+          for f in scripts/*.sh scripts/codeshield-* scripts/openclaw-* scripts/emergency-*; do
+            [ -f "$f" ] || continue
+            # Only check files with bash/sh shebang
+            head -1 "$f" | grep -qE '#!.*(bash|sh)' || continue
+            echo "Checking $f ..."
+            shellcheck -S warning -e SC1091 "$f"
+          done
+
+      - name: Dry-run install syntax check
+        run: bash -n install.sh

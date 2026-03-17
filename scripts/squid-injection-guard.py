@@ -102,9 +102,12 @@ def main():
 
             sys.stdout.flush()
 
+        except EOFError:
+            break
         except Exception as e:
-            log_event(f"ERROR: {e}")
-            sys.stdout.write("OK\n")
+            log_event(f"ERROR processing request (fail-closed): {e}")
+            # Fail-closed: block on unexpected errors to prevent injection bypass
+            sys.stdout.write("OK rewrite-url=http://127.0.0.1/codeshield-blocked\n")
             sys.stdout.flush()
 
 

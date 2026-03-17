@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # CODE SHIELD V3 -- Security Audit
-# Usage: security-audit.sh [--quiet]
+# Usage: security-audit.sh [--quiet] [--json]
 set -uo pipefail
 
 ###############################################################################
 # Config
 ###############################################################################
 QUIET=0
-[[ "${1:-}" == "--quiet" ]] && QUIET=1
+JSON_MODE=0
+for _arg in "${@:-}"; do
+    [[ "$_arg" == "--quiet" ]] && QUIET=1
+    [[ "$_arg" == "--json" ]] && JSON_MODE=1 && QUIET=1
+done
 
 CS_CONF_DIR="/etc/openclaw-codeshield"
 CS_DATA_DIR="/var/lib/openclaw-codeshield"
@@ -32,6 +36,9 @@ PASS=0
 FAIL=0
 MAYBE=0
 TOTAL=0
+# JSON result accumulator (newline-separated "name|status" pairs)
+_JSON_RESULTS=""
+_CURRENT_SECTION=""
 
 ###############################################################################
 # Check functions
@@ -43,9 +50,11 @@ check() {
     if eval "$@" &>/dev/null; then
         PASS=$((PASS + 1))
         [ "$QUIET" -eq 0 ] && printf " ${GREEN}[PASS]${RESET} %s\n" "$name"
+        _JSON_RESULTS="${_JSON_RESULTS}${_CURRENT_SECTION}|${name}|pass"$'\n'
     else
         FAIL=$((FAIL + 1))
         [ "$QUIET" -eq 0 ] && printf " ${RED}[FAIL]${RESET} %s\n" "$name"
+        _JSON_RESULTS="${_JSON_RESULTS}${_CURRENT_SECTION}|${name}|fail"$'\n'
     fi
 }
 
@@ -55,10 +64,12 @@ check_maybe() {
     if eval "$@" &>/dev/null; then
         MAYBE=$((MAYBE + 1))
         [ "$QUIET" -eq 0 ] && printf " ${YELLOW}[SKIP]${RESET} %s (not deployed)\n" "$name"
+        _JSON_RESULTS="${_JSON_RESULTS}${_CURRENT_SECTION}|${name}|skip"$'\n'
     else
         TOTAL=$((TOTAL + 1))
         PASS=$((PASS + 1))
         [ "$QUIET" -eq 0 ] && printf " ${GREEN}[PASS]${RESET} %s\n" "$name"
+        _JSON_RESULTS="${_JSON_RESULTS}${_CURRENT_SECTION}|${name}|pass"$'\n'
     fi
 }
 
@@ -76,6 +87,7 @@ fi
 # NETWORK SECURITY (10)
 ###############################################################################
 [ "$QUIET" -eq 0 ] && printf "${BOLD}${DIM} --- Network Security ---${RESET}\n"
+_CURRENT_SECTION="Network Security"
 
 check "ufw active" \
     "ufw status | grep -q 'Status: active'"
@@ -111,6 +123,7 @@ check "dns direct query blocked" \
 # ACCESS CONTROL (11)
 ###############################################################################
 [ "$QUIET" -eq 0 ] && printf "${BOLD}${DIM} --- Access Control ---${RESET}\n"
+_CURRENT_SECTION="Access Control"
 
 check "openclaw not in docker group" \
     "! id -nG openclaw-svc 2>/dev/null | grep -qw docker"
@@ -149,6 +162,7 @@ check "no inline secrets in openclaw.json" \
 # QDRANT SECURITY (2)
 ###############################################################################
 [ "$QUIET" -eq 0 ] && printf "${BOLD}${DIM} --- Qdrant Security ---${RESET}\n"
+_CURRENT_SECTION="Qdrant Security"
 
 check "qdrant unauth rejected" \
     "! curl -sf http://127.0.0.1:6333/collections 2>/dev/null | grep -q 'result'"
@@ -160,6 +174,7 @@ check "qdrant auth accepted" \
 # OUTBOUND PROXY (4)
 ###############################################################################
 [ "$QUIET" -eq 0 ] && printf "${BOLD}${DIM} --- Outbound Proxy ---${RESET}\n"
+_CURRENT_SECTION="Outbound Proxy"
 
 check "squid active" \
     "systemctl is-active squid"
@@ -177,6 +192,7 @@ check "squid injection guard exists" \
 # AI AGENT SECURITY (6)
 ###############################################################################
 [ "$QUIET" -eq 0 ] && printf "${BOLD}${DIM} --- AI Agent Security ---${RESET}\n"
+_CURRENT_SECTION="AI Agent Security"
 
 check "skills freeze policy exists" \
     "test -f $OPENCLAW_HOME/.openclaw/skills-policy.json -o -f $OPENCLAW_SVC_HOME/.openclaw/skills-policy.json"
@@ -200,6 +216,7 @@ check "cost monitor exists" \
 # DATABASE PROTECTION (2 -- maybe)
 ###############################################################################
 [ "$QUIET" -eq 0 ] && printf "${BOLD}${DIM} --- Database Protection ---${RESET}\n"
+_CURRENT_SECTION="Database Protection"
 
 check_maybe "redis not deployed" \
     "! systemctl is-active redis-server 2>/dev/null && ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qi redis"
@@ -211,6 +228,7 @@ check_maybe "postgres not deployed" \
 # INCIDENT RESPONSE (4)
 ###############################################################################
 [ "$QUIET" -eq 0 ] && printf "${BOLD}${DIM} --- Incident Response ---${RESET}\n"
+_CURRENT_SECTION="Incident Response"
 
 check "forensics key exists" \
     "test -f /root/.forensics_key -o -f $CS_CONF_DIR/forensics.key"
@@ -228,6 +246,7 @@ check "baseline exists" \
 # V3.0.1 SECURITY FIXES (6)
 ###############################################################################
 [ "$QUIET" -eq 0 ] && printf "${BOLD}${DIM} --- V3.0.1 Security Fixes ---${RESET}\n"
+_CURRENT_SECTION="V3.0.1 Security Fixes"
 
 check "qdrant cap_drop all" \
     "docker inspect qdrant-memory 2>/dev/null | python3 -c \"import sys,json; d=json.load(sys.stdin)[0]; caps=d['HostConfig'].get('CapDrop') or []; exit(0 if 'ALL' in caps else 1)\" 2>/dev/null"
@@ -251,6 +270,7 @@ check "no inline gateway token" \
 # V3.0.2 SECURITY FIXES (9)
 ###############################################################################
 [ "$QUIET" -eq 0 ] && printf "${BOLD}${DIM} --- V3.0.2 Security Fixes ---${RESET}\n"
+_CURRENT_SECTION="V3.0.2 Security Fixes"
 
 check "ssh forwarding disabled" \
     "sshd -T 2>/dev/null | grep -i '^allowtcpforwarding ' | grep -qi 'no'"
@@ -283,6 +303,7 @@ check "systemd syscall filter" \
 # CONTINUOUS MONITORING (2)
 ###############################################################################
 [ "$QUIET" -eq 0 ] && printf "${BOLD}${DIM} --- Continuous Monitoring ---${RESET}\n"
+_CURRENT_SECTION="Continuous Monitoring"
 
 check "audit timer active" \
     "systemctl is-active codeshield-audit.timer 2>/dev/null || systemctl is-enabled codeshield-audit.timer 2>/dev/null"
@@ -294,6 +315,7 @@ check "guardian path active" \
 # SERVICE HEALTH (2)
 ###############################################################################
 [ "$QUIET" -eq 0 ] && printf "${BOLD}${DIM} --- Service Health ---${RESET}\n"
+_CURRENT_SECTION="Service Health"
 
 check "openclaw active" \
     "systemctl is-active openclaw.service"
@@ -343,6 +365,24 @@ printf "  ${BOLD}Security Score: %s / 10${RESET}\n" "$FINAL_SCORE"
 printf "${BOLD}"
 printf " ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
 printf "${RESET}\n"
+
+# JSON output mode
+if [ "$JSON_MODE" -eq 1 ]; then
+    # Build checks array from accumulated results
+    _json_checks=""
+    _first=1
+    while IFS='|' read -r section name status; do
+        [ -z "$name" ] && continue
+        # Escape double quotes in name/section
+        name="${name//\"/\\\"}"
+        section="${section//\"/\\\"}"
+        [ "$_first" -eq 0 ] && _json_checks="${_json_checks},"
+        _json_checks="${_json_checks}{\"section\":\"${section}\",\"name\":\"${name}\",\"status\":\"${status}\"}"
+        _first=0
+    done <<< "$_JSON_RESULTS"
+    printf '{"version":"3.0.3","timestamp":"%s","pass":%d,"fail":%d,"optional":%d,"total":%d,"score":%s,"checks":[%s]}\n' \
+        "$(date -Iseconds)" "$PASS" "$FAIL" "$MAYBE" "$TOTAL" "$FINAL_SCORE" "$_json_checks"
+fi
 
 # Log result
 LOG_DIR="/var/log/openclaw-codeshield"

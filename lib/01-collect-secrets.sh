@@ -196,6 +196,8 @@ else
         printf 'https_proxy=http://127.0.0.1:3128\n'
         printf 'http_proxy=http://127.0.0.1:3128\n'
         printf 'NODE_USE_ENV_PROXY=1\n'
+        printf 'NO_PROXY=127.0.0.1,localhost\n'
+        printf 'no_proxy=127.0.0.1,localhost\n'
     } > "$SECRETS_FILE"
 
     chmod 0600 "$SECRETS_FILE"

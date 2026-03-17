@@ -4,6 +4,64 @@ All notable changes to CODE SHIELD are documented here.
 
 ---
 
+## [3.0.6] — 2026-03-17
+
+### New Feature: Interactive Menu-Based Selection / 新功能：交互式菜单选择
+
+#### LLM Provider Menu (`codeshield-config add-model`) / 大模型提供商菜单
+
+- **Problem / 问题:** Users had to manually type API domains and environment variable names when adding LLM providers, which was error-prone and inconvenient.
+- **问题描述：** 用户添加大模型提供商时需要手动输入 API 域名和环境变量名，容易出错且不便。
+- **Fix / 修复:** All built-in providers now use a numbered menu (8 choices). Selecting a provider automatically fills in the API domain(s) and environment variable name(s). Users only need to enter the API key value.
+- **修复方式：** 所有内置提供商现在使用编号菜单（8 个选项）。选择提供商后自动填充 API 域名和环境变量名。用户只需输入 API 密钥值。
+- **New providers added / 新增提供商：**
+  - **DeepSeek (深度求索)** — `api.deepseek.com`, env var `DEEPSEEK_API_KEY`
+  - **MiniMax** — `api.minimax.io`, env vars `MINIMAX_API_KEY`, `MINIMAX_GROUP_ID`
+- **Updated providers / 更新提供商：**
+  - Anthropic → "Anthropic / Claude"
+  - Kimi 2.5 → "Kimi (月之暗面 Moonshot)"
+
+**Menu / 菜单：**
+```
+1) OpenAI (API Key)       2) OpenAI (OAuth)
+3) Anthropic / Claude     4) DeepSeek (深度求索)
+5) GLM5 (智谱 BigModel)   6) Kimi (月之暗面 Moonshot)
+7) MiniMax                8) Custom (自定义)
+```
+
+#### Channel Presets (`codeshield-config add-channel`) / 通道预设
+
+- **Problem / 问题:** Users had to manually type API domains and environment variable names when adding messaging channels, which was error-prone.
+- **问题描述：** 用户添加消息通道时需要手动输入 API 域名和环境变量名，容易出错。
+- **Fix / 修复:** Added built-in presets for the three most common channels. Selecting a preset automatically fills in the API domain(s), environment variable names, and channel name. Users only need to enter the secret values. Custom channel option is still available.
+- **修复方式：** 新增三个最常用通道的内置预设。选择预设后自动填充 API 域名、环境变量名和通道名称。用户只需输入密钥值。自定义通道选项仍然可用。
+- **Built-in channel presets / 内置通道预设：**
+  - **企业微信 (WeCom)** — `qyapi.weixin.qq.com`, env vars `WECOM_CORP_ID`, `WECOM_AGENT_ID`, `WECOM_SECRET`
+  - **飞书 (Feishu)** — `open.feishu.cn`, env vars `FEISHU_APP_ID`, `FEISHU_APP_SECRET`
+  - **Discord** — `discord.com`, `cdn.discordapp.com`, env vars `DISCORD_BOT_TOKEN`, `DISCORD_WEBHOOK_URL`
+
+**Menu / 菜单：**
+```
+1) 企业微信 (WeCom)    2) 飞书 (Feishu)
+3) Discord             4) Custom (自定义)
+```
+
+#### Skills Policy Update / 技能策略更新
+
+- Added `deepseek-chat` (`api.deepseek.com`) and `minimax-chat` (`api.minimax.io`) to approved skills list in `templates/skills-policy.json`.
+- 在 `templates/skills-policy.json` 中新增 `deepseek-chat` 和 `minimax-chat` 到已批准技能列表。
+
+### Files Changed / 修改文件
+
+| File / 文件 | Change / 变更 |
+|---|---|
+| `scripts/codeshield-config` | Added DeepSeek/MiniMax providers; added WeCom/Feishu/Discord channel presets; updated menus and help text |
+| `templates/skills-policy.json` | Added `deepseek-chat`, `minimax-chat` skills |
+| `README.md` | Updated version, provider/channel tables, menu examples, changelog |
+| `CHANGELOG.md` | Added V3.0.6 entry |
+
+---
+
 ## [3.0.5] — 2026-03-17
 
 ### Bug Fixes / 缺陷修复

@@ -4,6 +4,88 @@ All notable changes to CODE SHIELD are documented here.
 
 ---
 
+## [3.0.9] — 2026-03-17
+
+### Fix: Guardian proxy variable injection incomplete — OpenClaw cannot access network / 修复：Guardian 代理变量注入不完整——OpenClaw 无法访问网络
+
+**Problem / 问题:** After OpenClaw updates, the guardian script (`openclaw-guardian`) only injected 4 proxy variables (`HTTPS_PROXY`, `HTTP_PROXY`, `https_proxy`, `http_proxy`) into `secrets.env`. Two critical variables were missing:
+
+1. `NODE_USE_ENV_PROXY=1` — Required for Node.js 22+ built-in fetch (undici) to respect `HTTP_PROXY`/`HTTPS_PROXY` environment variables. Without this, all outbound HTTP requests from OpenClaw bypass the proxy and hit the iptables DROP rule, resulting in `TypeError: fetch failed` / `ETIMEDOUT`.
+2. `NO_PROXY=127.0.0.1,localhost` — Without this, requests to local services (Qdrant on 127.0.0.1:6333) are routed through Squid unnecessarily, causing potential routing loops or connection failures.
+
+**问题描述：** OpenClaw 更新后，Guardian 脚本（`openclaw-guardian`）仅向 `secrets.env` 注入 4 个代理变量（`HTTPS_PROXY`、`HTTP_PROXY`、`https_proxy`、`http_proxy`），遗漏了两个关键变量：
+
+1. `NODE_USE_ENV_PROXY=1` — Node.js 22+ 内置 fetch (undici) 需要此变量才会尊重 `HTTP_PROXY`/`HTTPS_PROXY` 环境变量。缺少此变量时，OpenClaw 的所有出站 HTTP 请求绕过代理直接命中 iptables DROP 规则，导致 `TypeError: fetch failed` / `ETIMEDOUT`。
+2. `NO_PROXY=127.0.0.1,localhost` — 缺少此变量时，访问本地服务（如 Qdrant 的 127.0.0.1:6333）也会经过 Squid，可能导致路由回环或连接失败。
+
+**Fix / 修复:** Replaced the simple 4-variable `for` loop with an associative array covering all 7 required variables and their correct values:
+
+```bash
+declare -A PROXY_VARS=(
+    [HTTPS_PROXY]="http://127.0.0.1:3128"
+    [HTTP_PROXY]="http://127.0.0.1:3128"
+    [https_proxy]="http://127.0.0.1:3128"
+    [http_proxy]="http://127.0.0.1:3128"
+    [NO_PROXY]="127.0.0.1,localhost"
+    [no_proxy]="127.0.0.1,localhost"
+    [NODE_USE_ENV_PROXY]="1"
+)
+```
+
+Also added `NO_PROXY` and `no_proxy` to the fresh-install secret generation in `01-collect-secrets.sh` (which already had `NODE_USE_ENV_PROXY=1` but was missing `NO_PROXY`).
+
+同时在新安装密钥生成脚本 `01-collect-secrets.sh` 中添加了 `NO_PROXY` 和 `no_proxy`（该文件已有 `NODE_USE_ENV_PROXY=1` 但缺少 `NO_PROXY`）。
+
+**Files changed / 修改文件:** `scripts/openclaw-guardian` (lines 112-131), `lib/01-collect-secrets.sh` (lines 199-200)
+
+**Security impact / 安全影响:** None. All 56 audit checks remain passing (9.5/10). The iptables kernel-level block, Squid rate limiting, body size cap, injection guard, and full traffic logging are unchanged. This fix only ensures OpenClaw correctly routes through the existing Squid proxy instead of failing to connect.
+
+**安全影响：** 无。所有 56 项审计检查继续通过（9.5/10）。iptables 内核级阻断、Squid 速率限制、请求体上限、注入防护和全流量日志均不变。此修复仅确保 OpenClaw 正确通过现有 Squid 代理路由，而非连接失败。
+
+---
+
+### New Feature: `codeshield-config network-mode` command / 新功能：`codeshield-config network-mode` 命令
+
+Added `network-mode` command to `codeshield-config` for toggling Squid proxy between **open** and **strict** domain enforcement modes.
+
+新增 `network-mode` 命令到 `codeshield-config`，用于在 Squid 代理的**开放**和**严格**域名模式之间切换。
+
+**Usage / 用法:**
+
+```bash
+# Show current network mode / 查看当前网络模式
+codeshield-config network-mode
+# → Current network mode: open (all domains allowed through proxy)
+
+# Switch to open mode (default, required for web_fetch)
+# 切换为开放模式（默认，web_fetch 必需）
+codeshield-config network-mode open
+
+# Switch to strict mode (known API domains only, disables web_fetch for arbitrary URLs)
+# 切换为严格模式（仅已知 API 域名，禁用对任意 URL 的 web_fetch）
+codeshield-config network-mode strict
+
+# In strict mode, add additional domains as needed
+# 严格模式下，按需添加额外域名
+codeshield-config proxy-allow api.example.com
+```
+
+**How it works / 工作原理:** The command toggles the `http_access` line in `/etc/squid/squid.conf` between:
+- **open:** `http_access allow localnet` (all domains through proxy)
+- **strict:** `http_access allow localnet known_api_domains` (whitelist enforcement)
+
+Squid is automatically reloaded after the change. Both modes maintain full security (iptables block, rate limiting, logging, injection guard).
+
+该命令切换 `/etc/squid/squid.conf` 中的 `http_access` 行：
+- **开放：** `http_access allow localnet`（所有域名通过代理）
+- **严格：** `http_access allow localnet known_api_domains`（白名单模式）
+
+切换后 Squid 自动重载。两种模式均保持完整安全性（iptables 阻断、速率限制、日志记录、注入防护）。
+
+**Files changed / 修改文件:** `scripts/codeshield-config` (new `cmd_network_mode()` function, help text, dispatch entry)
+
+---
+
 ## [3.0.8] — 2026-03-17
 
 ### Fix: openclaw web_fetch and tool calls fail — Squid whitelist too restrictive / 修复：web_fetch 和工具调用失败——Squid 白名单过于严格

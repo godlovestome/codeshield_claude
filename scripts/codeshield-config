@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CODE SHIELD V3.0.8 -- Configuration Management CLI
+# CODE SHIELD V3.0.9 -- Configuration Management CLI
 # Usage: codeshield-config <command> [args]
 #
 # Commands:

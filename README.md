@@ -1,14 +1,14 @@
-# CODE SHIELD V3.0.8
+# CODE SHIELD V3.0.9
 
 **AI Agent Network Security Hardening System**
 
-CODE SHIELD V3 is a comprehensive, production-grade security framework designed to protect AI agents running on Linux servers. It provides defense-in-depth through user isolation, secret encryption (systemd-creds), outbound proxy whitelisting, prompt injection detection, container privilege reduction, systemd sandbox hardening, and a guardian service that automatically re-applies protection after agent updates. V3.0.8 adds automatic openclaw JS patching in `codeshield-config add-model` for non-native providers (DeepSeek, GLM5) — no manual file editing required after openclaw updates. Originally built to harden OpenClaw, CODE SHIELD achieves a security score of **9.5/10** across **56 automated audit checks**.
+CODE SHIELD V3 is a comprehensive, production-grade security framework designed to protect AI agents running on Linux servers. It provides defense-in-depth through user isolation, secret encryption (systemd-creds), outbound proxy whitelisting, prompt injection detection, container privilege reduction, systemd sandbox hardening, and a guardian service that automatically re-applies protection after agent updates. V3.0.8 adds automatic openclaw JS patching in `codeshield-config add-model` for non-native providers (DeepSeek, GLM5) — no manual file editing required after openclaw updates. V3.0.9 fixes OpenClaw network access by adding missing `NODE_USE_ENV_PROXY` and `NO_PROXY` to the guardian proxy injection, and adds `codeshield-config network-mode` for toggling between open and strict domain enforcement. Originally built to harden OpenClaw, CODE SHIELD achieves a security score of **9.5/10** across **56 automated audit checks**.
 
 ---
 
-**CODE SHIELD V3.0.8 -- AI Agent 网络安全加固系统**
+**CODE SHIELD V3.0.9 -- AI Agent 网络安全加固系统**
 
-CODE SHIELD V3 是一套完整的生产级安全框架，专为运行在 Linux 服务器上的 AI Agent 设计。V3.0.8 新增 `codeshield-config add-model deepseek` 自动修补 OpenClaw JS 文件、注册 DeepSeek 提供商支持，同时新增 `patch-provider` 命令供 OpenClaw 更新后手动重新修补。本系统通过 **56 项**自动化安全审计实现 **9.5/10** 的安全评分。
+CODE SHIELD V3 是一套完整的生产级安全框架，专为运行在 Linux 服务器上的 AI Agent 设计。V3.0.8 新增 `codeshield-config add-model deepseek` 自动修补 OpenClaw JS 文件、注册 DeepSeek 提供商支持，同时新增 `patch-provider` 命令供 OpenClaw 更新后手动重新修补。V3.0.9 修复 OpenClaw 网络访问：在 Guardian 代理变量注入中补全 `NODE_USE_ENV_PROXY` 和 `NO_PROXY`，新增 `codeshield-config network-mode` 命令用于切换开放/严格域名模式。本系统通过 **56 项**自动化安全审计实现 **9.5/10** 的安全评分。
 
 ---
 
@@ -48,7 +48,7 @@ The installer is interactive only when collecting API keys (Telegram, Brave, Ope
 
 ---
 
-## Configuration Management / 配置管理 (V3.0.8)
+## Configuration Management / 配置管理 (V3.0.9)
 
 After installation, use `codeshield-config` to manage all settings without re-running the installer or `openclaw onboard`. All built-in providers and channels use **interactive menus** — no manual domain input required.
 
@@ -88,6 +88,15 @@ codeshield-config add-channel
 # Add a domain to Squid proxy whitelist / 添加域名到 Squid 白名单
 codeshield-config proxy-allow open.feishu.cn
 
+# Toggle network access mode (V3.0.9) / 切换网络访问模式
+# open: all domains allowed through proxy (default, required for web_fetch)
+# 开放模式：允许所有域名通过代理（默认，web_fetch 必需）
+# strict: only known API domains allowed (disables web_fetch for arbitrary URLs)
+# 严格模式：仅允许已知 API 域名（禁用对任意 URL 的 web_fetch）
+codeshield-config network-mode              # show current mode / 查看当前模式
+codeshield-config network-mode open         # allow all domains / 允许所有域名
+codeshield-config network-mode strict       # whitelist only / 仅白名单域名
+
 # List configured channels and models / 列出已配置的通道和模型
 codeshield-config list-channels
 codeshield-config list-models
@@ -100,6 +109,7 @@ codeshield-config list-models
 - **Non-native providers (deepseek, glm5) auto-patch openclaw JS dist files** — no manual file editing / 非原生提供商（deepseek、glm5）自动修补 openclaw JS 文件——无需手动编辑
 - Channel and model configs stored in `/etc/openclaw-codeshield/channels.d/` and `models.d/`
 - `proxy-allow` adds domains to the known-domains reference list (logging and future selective enforcement)
+- **`network-mode`** toggles Squid between open (all domains) and strict (whitelist only) without affecting security score / `network-mode` 在开放模式（所有域名）和严格模式（仅白名单）之间切换，不影响安全评分
 
 **Supported LLM Providers (built-in) / 支持的大模型提供商（内置）:**
 
@@ -394,7 +404,8 @@ final_score = min(base + pass_bonus + extra_bonus, 10.0)
 | V3.0.5  | 56/56           | 9.5/10 |
 | V3.0.6  | 56/56           | 9.5/10 |
 | V3.0.7 | 56/56   | 9.5/10 |
-| **V3.0.8** | **56/56**   | **9.5/10** |
+| V3.0.8 | 56/56   | 9.5/10 |
+| **V3.0.9** | **56/56**   | **9.5/10** |
 
 Professional audit score (manual review): **~9.0/10** (up from 7.3 in V3.0.0)
 
@@ -451,6 +462,37 @@ codeshield-v3/
 ---
 
 ## Changelog / 版本历史
+
+### V3.0.9 (2026-03-17) — Fix OpenClaw network access & add network-mode command / 修复 OpenClaw 网络访问并新增网络模式命令
+
+**Fix 1: Guardian missing `NODE_USE_ENV_PROXY` and `NO_PROXY` / 修复 1：Guardian 遗漏 `NODE_USE_ENV_PROXY` 和 `NO_PROXY`**
+- **Root cause / 根因:** After OpenClaw updates, the guardian script (`openclaw-guardian`) only injected 4 proxy variables (`HTTPS_PROXY`, `HTTP_PROXY`, `https_proxy`, `http_proxy`) into `secrets.env`. It was missing `NODE_USE_ENV_PROXY=1` (required for Node.js 22+ undici to respect proxy env vars) and `NO_PROXY=127.0.0.1,localhost` (to prevent loopback services like Qdrant from being routed through Squid).
+- **根因描述：** OpenClaw 更新后，Guardian 脚本（`openclaw-guardian`）仅向 `secrets.env` 注入 4 个代理变量（`HTTPS_PROXY`、`HTTP_PROXY`、`https_proxy`、`http_proxy`），遗漏了 `NODE_USE_ENV_PROXY=1`（Node.js 22+ undici 需要此变量才会尊重代理环境变量）和 `NO_PROXY=127.0.0.1,localhost`（防止 Qdrant 等本地服务走代理回环）。
+- **Fix / 修复:** Replaced the simple 4-variable loop with an associative array covering all 7 required variables: `HTTPS_PROXY`, `HTTP_PROXY`, `https_proxy`, `http_proxy`, `NO_PROXY`, `no_proxy`, `NODE_USE_ENV_PROXY`.
+- **修复方式：** 将简单的 4 变量循环替换为包含全部 7 个必需变量的关联数组。
+- **File / 文件:** `scripts/openclaw-guardian`
+
+**Fix 2: Fresh install missing `NO_PROXY` / 修复 2：新安装缺少 `NO_PROXY`**
+- Fresh installs had `NODE_USE_ENV_PROXY=1` but lacked `NO_PROXY` and `no_proxy`, causing local Qdrant requests to route through Squid unnecessarily.
+- 新安装已包含 `NODE_USE_ENV_PROXY=1` 但缺少 `NO_PROXY` 和 `no_proxy`，导致本地 Qdrant 请求不必要地经过 Squid。
+- **File / 文件:** `lib/01-collect-secrets.sh`
+
+**New: `codeshield-config network-mode` command / 新增：`codeshield-config network-mode` 命令**
+- Toggle between **open** mode (all domains through proxy, default) and **strict** mode (known API domains only).
+- 在**开放**模式（所有域名通过代理，默认）和**严格**模式（仅已知 API 域名）之间切换。
+- Open mode is required for `web_fetch` and AI agent tools that access arbitrary URLs on behalf of the user.
+- 开放模式是 `web_fetch` 及 AI Agent 工具代用户访问任意 URL 所必需的。
+- Usage / 用法：
+
+```bash
+codeshield-config network-mode              # Show current mode / 查看当前模式
+codeshield-config network-mode open         # Allow all domains / 允许所有域名
+codeshield-config network-mode strict       # Whitelist only / 仅白名单域名
+```
+
+**Security impact / 安全影响:** All 56 audit checks remain passing (9.5/10). The iptables kernel-level isolation, Squid rate limiting, body size cap, injection guard, and full traffic logging are unchanged.
+
+所有 56 项安全审计检查继续通过（9.5/10）。iptables 内核级隔离、Squid 速率限制、请求体上限、注入防护和全流量日志均不受影响。
 
 ### V3.0.8 (2026-03-17) — Auto-patch openclaw JS for non-native providers / 自动修补 openclaw JS 以支持非原生提供商
 

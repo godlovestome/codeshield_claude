@@ -1,14 +1,14 @@
-# CODE SHIELD V3.0.6
+# CODE SHIELD V3.0.7
 
 **AI Agent Network Security Hardening System**
 
-CODE SHIELD V3 is a comprehensive, production-grade security framework designed to protect AI agents running on Linux servers. It provides defense-in-depth through user isolation, secret encryption (systemd-creds), outbound proxy whitelisting, prompt injection detection, container privilege reduction, systemd sandbox hardening, and a guardian service that automatically re-applies protection after agent updates. V3.0.6 adds interactive menu-based selection for LLM providers (DeepSeek, MiniMax added; no manual domain input required) and built-in channel presets for WeCom, Feishu, and Discord. Originally built to harden OpenClaw, CODE SHIELD achieves a security score of **9.5/10** across **56 automated audit checks**.
+CODE SHIELD V3 is a comprehensive, production-grade security framework designed to protect AI agents running on Linux servers. It provides defense-in-depth through user isolation, secret encryption (systemd-creds), outbound proxy whitelisting, prompt injection detection, container privilege reduction, systemd sandbox hardening, and a guardian service that automatically re-applies protection after agent updates. V3.0.7 fixes a crash in `codeshield-config add-model`/`add-channel` when adding new providers whose API keys don't yet exist in the secrets file. Originally built to harden OpenClaw, CODE SHIELD achieves a security score of **9.5/10** across **56 automated audit checks**.
 
 ---
 
-**CODE SHIELD V3.0.6 -- AI Agent 网络安全加固系统**
+**CODE SHIELD V3.0.7 -- AI Agent 网络安全加固系统**
 
-CODE SHIELD V3 是一套完整的生产级安全框架，专为运行在 Linux 服务器上的 AI Agent 设计。V3.0.6 新增大模型交互式菜单选择（新增 DeepSeek、MiniMax；无需手动输入域名）以及企业微信、飞书、Discord 内置通道预设。本系统通过 **56 项**自动化安全审计实现 **9.5/10** 的安全评分。
+CODE SHIELD V3 是一套完整的生产级安全框架，专为运行在 Linux 服务器上的 AI Agent 设计。V3.0.7 修复了 `codeshield-config add-model`/`add-channel` 在添加密钥文件中尚不存在的新提供商时崩溃的问题。本系统通过 **56 项**自动化安全审计实现 **9.5/10** 的安全评分。
 
 ---
 
@@ -48,7 +48,7 @@ The installer is interactive only when collecting API keys (Telegram, Brave, Ope
 
 ---
 
-## Configuration Management / 配置管理 (V3.0.6)
+## Configuration Management / 配置管理 (V3.0.7)
 
 After installation, use `codeshield-config` to manage all settings without re-running the installer or `openclaw onboard`. All built-in providers and channels use **interactive menus** — no manual domain input required.
 
@@ -384,7 +384,8 @@ final_score = min(base + pass_bonus + extra_bonus, 10.0)
 | V3.0.3  | 56/56           | 9.5/10 |
 | V3.0.4  | 56/56           | 9.5/10 |
 | V3.0.5  | 56/56           | 9.5/10 |
-| **V3.0.6** | **56/56**   | **9.5/10** |
+| V3.0.6  | 56/56           | 9.5/10 |
+| **V3.0.7** | **56/56**   | **9.5/10** |
 
 Professional audit score (manual review): **~9.0/10** (up from 7.3 in V3.0.0)
 
@@ -404,7 +405,7 @@ codeshield-v3/
 |   |-- 05-injection-defense.sh   # Prompt injection defense
 |   `-- 06-guardian.sh            # Guardian watchdog service
 |-- scripts/
-|   |-- codeshield-config         # Configuration management CLI (V3.0.6)
+|   |-- codeshield-config         # Configuration management CLI (V3.0.7)
 |   |-- security-audit.sh         # 56-item security audit
 |   |-- openclaw-injection-scan   # Session injection scanner
 |   |-- openclaw-cost-monitor     # API cost monitoring
@@ -441,6 +442,16 @@ codeshield-v3/
 ---
 
 ## Changelog / 版本历史
+
+### V3.0.7 (2026-03-17) — Bug Fix: `add-model`/`add-channel` crash on new keys / 修复：添加新密钥时崩溃
+
+**Fix: `read_secret()` exits script when key not found / 修复：`read_secret()` 在密钥不存在时导致脚本退出**
+- **Root cause / 根因:** `read_secret()` uses a `grep | head | cut` pipeline. When adding a **new** provider (e.g., DeepSeek), the key doesn't exist in `secrets.env`, so `grep` returns exit code 1. With `set -euo pipefail` (line 15), `pipefail` propagates `grep`'s non-zero exit to the pipeline, and `set -e` kills the script silently — the API key prompt never appears.
+- **根因描述：** `read_secret()` 使用 `grep | head | cut` 管道。添加**新**提供商（如 DeepSeek）时，密钥在 `secrets.env` 中不存在，`grep` 返回退出码 1。由于 `set -euo pipefail`（第 15 行），`pipefail` 将 `grep` 的非零退出码传播到整个管道，`set -e` 静默终止脚本——API 密钥提示永远不会出现。
+- **Fix / 修复:** Added `|| true` to the grep pipeline in `read_secret()` so it returns an empty string (not an error) when a key is missing.
+- **修复方式：** 在 `read_secret()` 的 grep 管道末尾添加 `|| true`，使密钥不存在时返回空字符串而非错误。
+- **File changed / 修改文件:** `scripts/codeshield-config` (line 101)
+- **Impact / 影响:** `codeshield-config add-model` and `add-channel` now correctly prompt for new API keys. Existing keys continue to show `[current: sk-1...xxxx] (Enter to keep):`.
 
 ### V3.0.6 (2026-03-17) — Interactive Menu Selection & New Providers / 交互式菜单选择与新增提供商
 

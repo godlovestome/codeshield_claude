@@ -4,6 +4,29 @@ All notable changes to CODE SHIELD are documented here.
 
 ---
 
+## [3.0.7] — 2026-03-17
+
+### Bug Fix: `codeshield-config add-model`/`add-channel` crashes when adding new keys / 修复：添加新密钥时崩溃
+
+- **Problem / 问题:** Running `codeshield-config add-model deepseek` (or any new provider whose API key doesn't yet exist in `secrets.env`) would print the model info but silently exit before prompting for the API key. The script terminated immediately after displaying "Auth: apikey" — the `DEEPSEEK_API_KEY:` prompt never appeared. Same issue affected `add-channel` for new channels.
+- **问题描述：** 运行 `codeshield-config add-model deepseek`（或任何 API 密钥尚不存在于 `secrets.env` 中的新提供商）会打印模型信息但在提示输入 API 密钥前静默退出。脚本在显示 "Auth: apikey" 后立即终止——`DEEPSEEK_API_KEY:` 提示永远不会出现。`add-channel` 添加新通道时也有同样问题。
+- **Root cause / 根因:** `read_secret()` (line 98-103) uses a `grep | head | cut` pipeline. When the key doesn't exist, `grep` returns exit code 1. With `set -euo pipefail` (line 15), `pipefail` propagates `grep`'s non-zero exit to the pipeline result, and `set -e` kills the script. The caller `existing=$(read_secret "$var")` at line 590 (`add-model`) and line 422 (`add-channel`) captures the non-zero exit code, triggering immediate termination.
+- **根因详述：** `read_secret()`（第 98-103 行）使用 `grep | head | cut` 管道。当密钥不存在时，`grep` 返回退出码 1。由于 `set -euo pipefail`（第 15 行），`pipefail` 将 `grep` 的非零退出码传播到管道结果，`set -e` 终止脚本。调用方 `existing=$(read_secret "$var")`（`add-model` 第 590 行、`add-channel` 第 422 行）捕获到非零退出码，触发立即终止。
+- **Fix / 修复:** Added `|| true` to the grep pipeline in `read_secret()` so it returns an empty string (not an error) when a key is missing:
+  ```bash
+  grep -E "^${key}=" "$SECRETS_FILE" 2>/dev/null | head -1 | cut -d'=' -f2- || true
+  ```
+- **修复方式：** 在 `read_secret()` 的 grep 管道末尾添加 `|| true`，使密钥不存在时返回空字符串而非错误。
+- **File changed / 修改文件:** `scripts/codeshield-config` (line 101)
+- **Impact / 影响:** Both `add-model` and `add-channel` now correctly prompt for new API keys. Existing keys continue to show the masked current value with option to keep.
+
+### Version Bump
+
+- `install.sh`: `CS_VERSION` → `3.0.7`
+- `scripts/codeshield-config`: Header comment → `V3.0.7`
+
+---
+
 ## [3.0.6] — 2026-03-17
 
 ### New Feature: Interactive Menu-Based Selection / 新功能：交互式菜单选择

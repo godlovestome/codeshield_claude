@@ -1,14 +1,14 @@
-# CODE SHIELD V3.0.4
+# CODE SHIELD V3.0.5
 
 **AI Agent Network Security Hardening System**
 
-CODE SHIELD V3 is a comprehensive, production-grade security framework designed to protect AI agents running on Linux servers. It provides defense-in-depth through user isolation, secret encryption (systemd-creds), outbound proxy whitelisting, prompt injection detection, container privilege reduction, systemd sandbox hardening, and a guardian service that automatically re-applies protection after agent updates. V3.0.4 fixes **`--update` mode failure** (Stage 6 "Secrets encryption" referencing non-existent file), and resolves **three false audit failures** caused by hardcoded UID and UFW/iptables-persistent package conflict. Originally built to harden OpenClaw, CODE SHIELD achieves a security score of **9.5/10** across **56 automated audit checks**.
+CODE SHIELD V3 is a comprehensive, production-grade security framework designed to protect AI agents running on Linux servers. It provides defense-in-depth through user isolation, secret encryption (systemd-creds), outbound proxy whitelisting, prompt injection detection, container privilege reduction, systemd sandbox hardening, and a guardian service that automatically re-applies protection after agent updates. V3.0.5 fixes the last remaining audit false failure — `dns direct query blocked` — caused by `iptables -S` output normalization reordering fields vs. the regex pattern, and ensures the scoring bonus correctly recognizes `netfilter-persistent` as a valid firewall. Originally built to harden OpenClaw, CODE SHIELD achieves a security score of **9.5/10** across **56 automated audit checks**.
 
 ---
 
-**CODE SHIELD V3.0.4 -- AI Agent 网络安全加固系统**
+**CODE SHIELD V3.0.5 -- AI Agent 网络安全加固系统**
 
-CODE SHIELD V3 是一套完整的生产级安全框架，专为运行在 Linux 服务器上的 AI Agent 设计。V3.0.4 修复了 **`--update` 模式执行失败**（第 6 阶段「密钥加密」引用不存在的占位符文件），并解决了**三项安全审计误报**——由硬编码 UID 和 UFW/iptables-persistent 包冲突引起。本系统通过 **56 项**自动化安全审计实现 **9.5/10** 的安全评分。
+CODE SHIELD V3 是一套完整的生产级安全框架，专为运行在 Linux 服务器上的 AI Agent 设计。V3.0.5 修复了最后一个审计误报 `dns direct query blocked`——由 `iptables -S` 输出归一化导致字段顺序与正则表达式不匹配引起；同时修复评分加分逻辑以正确识别 `netfilter-persistent` 为有效防火墙。本系统通过 **56 项**自动化安全审计实现 **9.5/10** 的安全评分。
 
 ---
 
@@ -366,7 +366,8 @@ final_score = min(base + pass_bonus + extra_bonus, 10.0)
 | V3.0.1  | 42/42           | 9.3/10 |
 | V3.0.2  | 56/56           | 9.5/10 |
 | V3.0.3  | 56/56           | 9.5/10 |
-| **V3.0.4** | **56/56**   | **9.5/10** |
+| V3.0.4  | 56/56           | 9.5/10 |
+| **V3.0.5** | **56/56**   | **9.5/10** |
 
 Professional audit score (manual review): **~9.0/10** (up from 7.3 in V3.0.0)
 
@@ -423,6 +424,21 @@ codeshield-v3/
 ---
 
 ## Changelog / 版本历史
+
+### V3.0.5 (2026-03-17) — DNS Audit Check & Scoring Fix / DNS 审计检查与评分修复
+
+**Fix 1: `dns direct query blocked` audit false failure / 修复 1：`dns direct query blocked` 审计误报**
+- **根因：** `iptables -S OUTPUT` 输出对规则字段进行归一化排序，将 `! -d 127.0.0.0/8` 排在 `--uid-owner` **之前**。但审计检查的正则表达式要求 `uid-owner` 出现在 `! -d` 之前，导致模式永远无法匹配。`force proxy non-loopback block` 检查因使用了正确的字段顺序所以通过，但 `dns direct query blocked` 失败。
+- **Root cause:** `iptables -S OUTPUT` normalizes rule field order, placing `! -d 127.0.0.0/8` **before** `--uid-owner`. The audit regex required `uid-owner` before `! -d`, so the pattern never matched. The `force proxy non-loopback block` check passed because its regex already used the correct (normalized) field order.
+- **修复方式：** 将正则表达式改为 `(uid-owner.*$SVC_UID.*dport 53.*DROP|! -d 127.0.0.0/8.*uid-owner.*$SVC_UID.*DROP)`，第一项匹配专用 DNS 端口规则，第二项按归一化后的字段顺序匹配综合阻断规则。
+- **Fix:** Updated regex to `(uid-owner.*$SVC_UID.*dport 53.*DROP|! -d 127.0.0.0/8.*uid-owner.*$SVC_UID.*DROP)` — first alternative matches a dedicated DNS port rule; second matches the comprehensive block in normalized field order.
+
+**Fix 2: Scoring bonus not awarded for `netfilter-persistent` firewall / 修复 2：`netfilter-persistent` 防火墙未获得评分加分**
+- **根因：** 评分计算中网络加固加分（+0.1）仅检查 `ufw status`，但系统上 UFW 已被 `iptables-persistent` 替换（V3.0.4 已修复审计检查，但漏掉了评分计算）。
+- **Root cause:** The scoring bonus (+0.1 for network hardening) only checked `ufw status`, but UFW was replaced by `iptables-persistent` on the system. V3.0.4 fixed the audit check but missed the scoring calculation.
+- **修复方式：** 评分加分逻辑改为同时接受 `ufw status | grep active` 或 `systemctl is-active netfilter-persistent`。
+- **Fix:** Scoring bonus now accepts either `ufw status | grep active` or `systemctl is-active netfilter-persistent`.
+- **修改文件 / Files changed:** `scripts/security-audit.sh` (lines 120, 340-342, 383)
 
 ### V3.0.4 (2026-03-17) — Update Mode & Audit Reliability Fixes / 更新模式与审计可靠性修复
 

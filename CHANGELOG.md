@@ -4,6 +4,36 @@ All notable changes to CODE SHIELD are documented here.
 
 ---
 
+## [3.0.8] — 2026-03-17
+
+### New Feature: Automatic openclaw JS patching for non-native providers / 新功能：非原生提供商自动修补 openclaw JS
+
+**Problem / 问题:** OpenClaw's bundled JS dist files do not natively include DeepSeek or GLM5 as LLM providers. Three edits per dist file are required for each non-native provider: (1) add the API key env var to the `resolveEnvApiKey()` lookup map, (2) add a `buildProvider()` function with model definitions, (3) register the provider in `resolveImplicitProviders()`. There are 5 separate JS bundles, each containing their own copy of these functions. Previously this required manual editing after every openclaw update, and was completely undocumented for end-users.
+
+**问题描述：** OpenClaw 的打包 JS dist 文件不原生支持 DeepSeek 或 GLM5 大模型提供商。每个 dist 文件需要三处修改：(1) 在 `resolveEnvApiKey()` 查找映射中添加 API 密钥环境变量，(2) 添加包含模型定义的 `buildProvider()` 函数，(3) 在 `resolveImplicitProviders()` 中注册提供商。共有 5 个独立的 JS 包，每个都包含这些函数的独立副本。此前每次 openclaw 更新后都需要手动编辑，且对用户完全没有文档说明。
+
+**Fix / 修复:** `codeshield-config add-model deepseek` (and `glm5`) now automatically calls a Python-based JS patching routine that modifies all openclaw dist files in `$OPENCLAW_MODULE_DIR/dist/`. Additionally, a new `patch-provider` command allows re-applying the patch after openclaw updates.
+
+**修复方式：** `codeshield-config add-model deepseek`（及 `glm5`）现在自动调用基于 Python 的 JS 修补程序，修改 `$OPENCLAW_MODULE_DIR/dist/` 中的所有 openclaw dist 文件。新增 `patch-provider` 命令允许 openclaw 更新后重新应用修补。
+
+**Root cause discovered / 发现的根因:** When OpenClaw processes API calls via its lane task gateway (`run-main-D5as9z3E.js` → `auth-profiles-Do5usXx5.js`), it uses `resolveImplicitProviders()` to build the provider list. If `deepseek` is not in the env var map and not registered in `resolveImplicitProviders()`, the gateway falls back to the rate-limited built-in OpenAI-codex profile, producing "API rate limit reached" errors even when `DEEPSEEK_API_KEY` is correctly set in `secrets.env`.
+
+**发现的根因：** OpenClaw 通过 lane task 网关（`run-main-D5as9z3E.js` → `auth-profiles-Do5usXx5.js`）处理 API 调用时，使用 `resolveImplicitProviders()` 构建提供商列表。如果 `deepseek` 不在环境变量映射中且未在 `resolveImplicitProviders()` 中注册，网关会回退到受速率限制的内置 OpenAI-codex 配置文件，即使 `DEEPSEEK_API_KEY` 在 `secrets.env` 中正确设置，也会产生 "API rate limit reached" 错误。
+
+**New commands / 新命令:**
+- `codeshield-config patch-provider <provider>` — manually trigger JS patching for a specific non-native provider. Use after `npm install -g openclaw` or `openclaw update` wipes the dist files.
+- `codeshield-config patch-provider <provider>` — 手动触发特定非原生提供商的 JS 修补。在 `npm install -g openclaw` 或 `openclaw update` 覆盖 dist 文件后使用。
+
+**Files changed / 修改文件:**
+- `scripts/codeshield-config`: Added `patch_openclaw_provider()`, `update_openclaw_model_whitelist()`, `clear_openclaw_caches()` functions; added `patch-provider` command; `cmd_add_model()` now auto-calls patching for non-native providers.
+
+### Version Bump
+- `scripts/codeshield-config`: Header comment → `V3.0.8`
+- `README.md`: Version → V3.0.8, added `patch-provider` command docs
+- `CHANGELOG.md`: Added V3.0.8 entry
+
+---
+
 ## [3.0.7] — 2026-03-17
 
 ### Bug Fix: `codeshield-config add-model`/`add-channel` crashes when adding new keys / 修复：添加新密钥时崩溃

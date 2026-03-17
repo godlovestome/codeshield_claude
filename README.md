@@ -1,14 +1,14 @@
-# CODE SHIELD V3.0.7
+# CODE SHIELD V3.0.8
 
 **AI Agent Network Security Hardening System**
 
-CODE SHIELD V3 is a comprehensive, production-grade security framework designed to protect AI agents running on Linux servers. It provides defense-in-depth through user isolation, secret encryption (systemd-creds), outbound proxy whitelisting, prompt injection detection, container privilege reduction, systemd sandbox hardening, and a guardian service that automatically re-applies protection after agent updates. V3.0.7 fixes a crash in `codeshield-config add-model`/`add-channel` when adding new providers whose API keys don't yet exist in the secrets file. Originally built to harden OpenClaw, CODE SHIELD achieves a security score of **9.5/10** across **56 automated audit checks**.
+CODE SHIELD V3 is a comprehensive, production-grade security framework designed to protect AI agents running on Linux servers. It provides defense-in-depth through user isolation, secret encryption (systemd-creds), outbound proxy whitelisting, prompt injection detection, container privilege reduction, systemd sandbox hardening, and a guardian service that automatically re-applies protection after agent updates. V3.0.8 adds automatic openclaw JS patching in `codeshield-config add-model` for non-native providers (DeepSeek, GLM5) — no manual file editing required after openclaw updates. Originally built to harden OpenClaw, CODE SHIELD achieves a security score of **9.5/10** across **56 automated audit checks**.
 
 ---
 
-**CODE SHIELD V3.0.7 -- AI Agent 网络安全加固系统**
+**CODE SHIELD V3.0.8 -- AI Agent 网络安全加固系统**
 
-CODE SHIELD V3 是一套完整的生产级安全框架，专为运行在 Linux 服务器上的 AI Agent 设计。V3.0.7 修复了 `codeshield-config add-model`/`add-channel` 在添加密钥文件中尚不存在的新提供商时崩溃的问题。本系统通过 **56 项**自动化安全审计实现 **9.5/10** 的安全评分。
+CODE SHIELD V3 是一套完整的生产级安全框架，专为运行在 Linux 服务器上的 AI Agent 设计。V3.0.8 新增 `codeshield-config add-model deepseek` 自动修补 OpenClaw JS 文件、注册 DeepSeek 提供商支持，同时新增 `patch-provider` 命令供 OpenClaw 更新后手动重新修补。本系统通过 **56 项**自动化安全审计实现 **9.5/10** 的安全评分。
 
 ---
 
@@ -48,7 +48,7 @@ The installer is interactive only when collecting API keys (Telegram, Brave, Ope
 
 ---
 
-## Configuration Management / 配置管理 (V3.0.7)
+## Configuration Management / 配置管理 (V3.0.8)
 
 After installation, use `codeshield-config` to manage all settings without re-running the installer or `openclaw onboard`. All built-in providers and channels use **interactive menus** — no manual domain input required.
 
@@ -67,11 +67,17 @@ codeshield-config edit
 
 # Add an LLM provider (interactive menu, domains auto-filled)
 # 添加大模型提供商（交互式菜单，域名自动填充）
+# Non-native providers (deepseek, glm5) automatically patch openclaw JS files.
+# 非原生提供商（deepseek、glm5）会自动修补 openclaw JS 文件。
 codeshield-config add-model
 #   1) OpenAI (API Key)       2) OpenAI (OAuth)
 #   3) Anthropic / Claude     4) DeepSeek (深度求索)
 #   5) GLM5 (智谱 BigModel)   6) Kimi (月之暗面 Moonshot)
 #   7) MiniMax                8) Custom (自定义)
+
+# Re-patch openclaw JS files after openclaw update (non-native providers only)
+# openclaw 更新后重新修补 JS 文件（仅非原生提供商）
+codeshield-config patch-provider deepseek
 
 # Add a messaging channel (interactive menu, domains auto-filled)
 # 添加消息通道（交互式菜单，域名自动填充）
@@ -91,6 +97,7 @@ codeshield-config list-models
 - Automatically decrypts secrets → modifies → re-encrypts (systemd-creds) / 自动解密 → 修改 → 重新加密
 - Automatically updates Squid proxy whitelist when adding channels/models / 添加通道/模型时自动更新 Squid 白名单
 - Automatically restarts openclaw.service after changes / 修改后自动重启 openclaw 服务
+- **Non-native providers (deepseek, glm5) auto-patch openclaw JS dist files** — no manual file editing / 非原生提供商（deepseek、glm5）自动修补 openclaw JS 文件——无需手动编辑
 - Channel and model configs stored in `/etc/openclaw-codeshield/channels.d/` and `models.d/`
 
 **Supported LLM Providers (built-in) / 支持的大模型提供商（内置）:**
@@ -385,7 +392,8 @@ final_score = min(base + pass_bonus + extra_bonus, 10.0)
 | V3.0.4  | 56/56           | 9.5/10 |
 | V3.0.5  | 56/56           | 9.5/10 |
 | V3.0.6  | 56/56           | 9.5/10 |
-| **V3.0.7** | **56/56**   | **9.5/10** |
+| V3.0.7 | 56/56   | 9.5/10 |
+| **V3.0.8** | **56/56**   | **9.5/10** |
 
 Professional audit score (manual review): **~9.0/10** (up from 7.3 in V3.0.0)
 
@@ -442,6 +450,22 @@ codeshield-v3/
 ---
 
 ## Changelog / 版本历史
+
+### V3.0.8 (2026-03-17) — Auto-patch openclaw JS for non-native providers / 自动修补 openclaw JS 以支持非原生提供商
+
+**New: Automatic openclaw JS file patching for DeepSeek and GLM5 / 新增：DeepSeek 和 GLM5 自动修补 openclaw JS 文件**
+- `codeshield-config add-model deepseek` (and `glm5`) now automatically patches all openclaw dist JS files to register the provider — no manual file editing required.
+- `codeshield-config add-model deepseek`（及 `glm5`）现在自动修补所有 openclaw dist JS 文件以注册提供商——无需手动编辑文件。
+- Patches: `resolveEnvApiKey()` env var map, `buildDeepSeekProvider()` function, `resolveImplicitProviders()` registration. Also updates `openclaw.json` model whitelist and clears Node.js compile/JITI caches.
+- 修补内容：`resolveEnvApiKey()` 环境变量映射、`buildDeepSeekProvider()` 函数、`resolveImplicitProviders()` 注册块。同时更新 `openclaw.json` 模型白名单并清除 Node.js 编译缓存/JITI 缓存。
+
+**New: `patch-provider` command / 新增：`patch-provider` 命令**
+- `codeshield-config patch-provider deepseek` — re-applies JS patching after an openclaw update wipes the dist files.
+- `codeshield-config patch-provider deepseek` — openclaw 更新后重新修补 dist 文件（openclaw 更新会覆盖原始文件）。
+
+**Background / 背景**
+- OpenClaw's bundled JS files do not include DeepSeek or GLM5 as native providers. Three edits per dist file are required: (1) add the API key env var to `resolveEnvApiKey()`'s lookup map, (2) add `buildDeepSeekProvider()` function with model definitions, (3) register the provider in `resolveImplicitProviders()`. Previously this required manual editing of 5 separate JS bundles after each openclaw update.
+- OpenClaw 的打包 JS 文件不包含 DeepSeek 或 GLM5 作为原生提供商。每个 dist 文件需要三处修改：(1) 在 `resolveEnvApiKey()` 的查找映射中添加 API 密钥环境变量，(2) 添加包含模型定义的 `buildDeepSeekProvider()` 函数，(3) 在 `resolveImplicitProviders()` 中注册提供商。此前每次 openclaw 更新后都需要手动编辑 5 个独立的 JS 包。
 
 ### V3.0.7 (2026-03-17) — Bug Fix: `add-model`/`add-channel` crash on new keys / 修复：添加新密钥时崩溃
 

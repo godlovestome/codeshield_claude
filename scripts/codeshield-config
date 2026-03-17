@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CODE SHIELD V3.0.7 -- Configuration Management CLI
+# CODE SHIELD V3.0.8 -- Configuration Management CLI
 # Usage: codeshield-config <command> [args]
 #
 # Commands:
@@ -8,6 +8,7 @@
 #   set KEY=VALUE            Set a single configuration key
 #   add-channel              Interactive: add a messaging channel (WeCom/Feishu/Discord/Custom)
 #   add-model [provider]     Add an LLM provider (openai|anthropic|deepseek|glm5|kimi|minimax|custom)
+#   patch-provider <provider> Patch openclaw JS files for a non-native provider (deepseek|glm5)
 #   list-channels            List configured channels
 #   list-models              List configured LLM providers
 #   proxy-allow <domain>     Add a domain to the Squid proxy whitelist
@@ -25,6 +26,26 @@ readonly WHITELIST_FILE="$CS_CONF_DIR/proxy-whitelist.conf"
 readonly CHANNELS_DIR="$CS_CONF_DIR/channels.d"
 readonly MODELS_DIR="$CS_CONF_DIR/models.d"
 readonly SQUID_CONF="/etc/squid/squid.conf"
+readonly OPENCLAW_MODULE_DIR="/home/openclaw/.npm-global/lib/node_modules/openclaw"
+
+###############################################################################
+# Provider patch data: providers NOT natively supported by openclaw that need
+# JS file patching when added via add-model.
+#
+# Format per entry:  ENV_VAR|BASE_URL|API_TYPE|MODEL_IDS|MODEL_NAMES|REASONING_FLAGS
+#   MODEL_IDS, MODEL_NAMES, REASONING_FLAGS: comma-separated, in sync order
+#
+# OPENCLAW_MODEL_REFS: space-separated list of "provider/model-id" strings to
+#   whitelist in openclaw.json agents.defaults.models
+###############################################################################
+declare -A OPENCLAW_JS_PATCH_PROVIDERS=(
+    [deepseek]="DEEPSEEK_API_KEY|https://api.deepseek.com/v1|openai-completions|deepseek-chat,deepseek-reasoner|DeepSeek V3,DeepSeek R1|false,true"
+    [glm5]="GLM_API_KEY|https://open.bigmodel.cn/api/paas/v4|openai-completions|glm-4-flash,glm-4-air|GLM-4-Flash,GLM-4-Air|false,false"
+)
+declare -A OPENCLAW_MODEL_REFS=(
+    [deepseek]="deepseek/deepseek-chat deepseek/deepseek-reasoner"
+    [glm5]="glm5/glm-4-flash glm5/glm-4-air"
+)
 
 ###############################################################################
 # Color helpers
@@ -172,6 +193,240 @@ restart_openclaw() {
         systemctl restart openclaw 2>/dev/null || true
         ok "openclaw service restarted."
     fi
+}
+
+###############################################################################
+# Clear openclaw runtime caches (compile cache + JITI) so JS edits take effect
+###############################################################################
+clear_openclaw_caches() {
+    local found=0
+    while IFS= read -r cdir; do
+        [ -d "$cdir" ] || continue
+        rm -rf "$cdir" 2>/dev/null || true
+        info "Cleared compile cache: $cdir"
+        found=1
+    done < <(find /tmp -maxdepth 5 -type d -name "node-compile-cache" 2>/dev/null || true)
+    while IFS= read -r jdir; do
+        [ -d "$jdir" ] || continue
+        rm -rf "$jdir" 2>/dev/null || true
+        info "Cleared JITI cache: $jdir"
+        found=1
+    done < <(find /tmp -maxdepth 5 -type d -name "jiti" 2>/dev/null || true)
+    [ "$found" -eq 0 ] && info "No openclaw runtime caches found (already clean)."
+}
+
+###############################################################################
+# Patch openclaw dist JS files to register a non-native LLM provider.
+# Called automatically by cmd_add_model for providers in OPENCLAW_JS_PATCH_PROVIDERS.
+###############################################################################
+patch_openclaw_provider() {
+    local provider="$1"
+
+    # Check if patching data exists for this provider
+    local patch_data="${OPENCLAW_JS_PATCH_PROVIDERS[$provider]:-}"
+    if [ -z "$patch_data" ]; then
+        return 0  # native provider — no JS patching needed
+    fi
+
+    if ! command -v python3 &>/dev/null; then
+        warn "python3 not found. Skipping openclaw JS patching for '$provider'."
+        warn "Install python3 then run: codeshield-config patch-provider $provider"
+        return 0
+    fi
+
+    IFS='|' read -r env_var base_url api_type model_ids model_names reasoning_flags <<< "$patch_data"
+
+    info "Patching openclaw JS files for provider '$provider' ..."
+
+    python3 - "$provider" "$env_var" "$base_url" "$api_type" \
+        "$model_ids" "$model_names" "$reasoning_flags" "$OPENCLAW_MODULE_DIR" << 'PYEOF'
+import sys, os
+
+provider     = sys.argv[1]
+env_var      = sys.argv[2]
+base_url     = sys.argv[3]
+api_type     = sys.argv[4]
+model_ids    = sys.argv[5].split(',')
+model_names  = sys.argv[6].split(',')
+reasoning    = [r.strip() == 'true' for r in sys.argv[7].split(',')]
+module_dir   = sys.argv[8]
+
+# Derive JS identifiers from provider name
+# e.g. "deepseek" -> fn "buildDeepSeekProvider", const "DEEPSEEK"
+# e.g. "glm5"     -> fn "buildGlm5Provider",     const "GLM5"
+parts   = provider.replace('-', ' ').replace('_', ' ').split()
+fn_cap  = ''.join(p.capitalize() for p in parts)
+fn_name = f"build{fn_cap}Provider"
+cpfx    = provider.upper().replace('-', '_')
+
+# Model object literals
+model_objs = []
+for mid, mname, reas in zip(model_ids, model_names, reasoning):
+    rs = "true" if reas else "false"
+    model_objs.append(
+        f'{{ id: "{mid}", name: "{mname}", reasoning: {rs}, input: ["text"], '
+        f'cost: {cpfx}_DEFAULT_COST, '
+        f'contextWindow: {cpfx}_DEFAULT_CONTEXT_WINDOW, '
+        f'maxTokens: {cpfx}_DEFAULT_MAX_TOKENS }}'
+    )
+
+BUILD_CODE = (
+    f'const {cpfx}_BASE_URL = "{base_url}";\n'
+    f'const {cpfx}_DEFAULT_CONTEXT_WINDOW = 64e3;\n'
+    f'const {cpfx}_DEFAULT_MAX_TOKENS = 8192;\n'
+    f'const {cpfx}_DEFAULT_COST = {{ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }};\n'
+    f'function {fn_name}() {{\n'
+    f'\treturn {{\n'
+    f'\t\tbaseUrl: {cpfx}_BASE_URL,\n'
+    f'\t\tapi: "{api_type}",\n'
+    f'\t\tmodels: [\n'
+    f'\t\t\t' + ',\n\t\t\t'.join(model_objs) + '\n'
+    f'\t\t]\n'
+    f'\t}};\n'
+    f'}}'
+)
+
+REGISTER_CODE = (
+    f'\tconst {provider}Key = resolveEnvApiKeyVarName("{provider}") ?? resolveApiKeyFromProfiles({{\n'
+    f'\t\tprovider: "{provider}",\n'
+    f'\t\tstore: authStore\n'
+    f'\t}});\n'
+    f'\tif ({provider}Key) providers.{provider} = {{\n'
+    f'\t\t...{fn_name}(),\n'
+    f'\t\tapiKey: {provider}Key\n'
+    f'\t}};'
+)
+
+dist_dir      = os.path.join(module_dir, 'dist')
+found = patched = skipped = failed = 0
+
+for root, dirs, files in os.walk(dist_dir):
+    dirs[:] = [d for d in dirs if d != 'node_modules']
+    for fname in sorted(files):
+        if not fname.endswith('.js'):
+            continue
+        fpath = os.path.join(root, fname)
+        try:
+            content = open(fpath, encoding='utf-8', errors='ignore').read()
+        except Exception:
+            continue
+        if 'resolveEnvApiKey' not in content:
+            continue
+
+        found += 1
+        rel = os.path.relpath(fpath, module_dir)
+
+        # Skip if already patched (either spacing variant)
+        if f'{provider}: "{env_var}"' in content or f"{provider}: '{env_var}'" in content:
+            print(f"  SKIP (already patched): {rel}", flush=True)
+            skipped += 1
+            continue
+
+        original = content
+        edits    = []
+
+        # ── Edit 1: add to envVar lookup map ──────────────────────────────
+        # The map closes with "\n\t}[normalized]". Find that position and
+        # insert ",\n\t\tprovider: "ENV_VAR"" before the closing brace.
+        marker = '\n\t}[normalized]'
+        pos = content.find(marker)
+        if pos != -1 and f'"{env_var}"' not in content[:pos + 1]:
+            last_nl  = content.rfind('\n', 0, pos)
+            prev_line = content[last_nl + 1:pos] if last_nl != -1 else ''
+            sep = ',' if not prev_line.rstrip().endswith(',') else ''
+            insert = f'{sep}\n\t\t{provider}: "{env_var}"'
+            content = content[:pos] + insert + content[pos:]
+            edits.append('envVar map')
+
+        # ── Edit 2: add buildProvider() before buildQwenPortalProvider() ──
+        qwen_anchor = '\nfunction buildQwenPortalProvider()'
+        if qwen_anchor in content and fn_name not in content:
+            content = content.replace(
+                qwen_anchor,
+                f'\n{BUILD_CODE}\n{qwen_anchor[1:]}',
+                1
+            )
+            edits.append('buildProvider fn')
+
+        # ── Edit 3: register provider before syntheticKey block ───────────
+        synth_anchor = '\n\tconst syntheticKey = resolveEnvApiKeyVarName("synthetic")'
+        if synth_anchor in content and f'{provider}Key' not in content:
+            content = content.replace(
+                synth_anchor,
+                f'\n{REGISTER_CODE}{synth_anchor[1:]}',
+                1
+            )
+            edits.append('registration')
+
+        if content != original:
+            try:
+                open(fpath, 'w', encoding='utf-8').write(content)
+                print(f"  PATCHED [{', '.join(edits)}]: {rel}", flush=True)
+                patched += 1
+            except Exception as e:
+                print(f"  ERROR writing {rel}: {e}", flush=True)
+                failed += 1
+        else:
+            print(f"  UNCHANGED (no matching patterns): {rel}", flush=True)
+
+print(f"\n  Result: {found} target files — {patched} patched, {skipped} already patched, {failed} errors",
+      flush=True)
+sys.exit(1 if failed > 0 else 0)
+PYEOF
+
+    local py_exit=$?
+    if [ $py_exit -eq 0 ]; then
+        ok "openclaw JS patching complete for '$provider'."
+        clear_openclaw_caches
+    else
+        warn "openclaw JS patching reported errors for '$provider'. Check output above."
+    fi
+}
+
+###############################################################################
+# Whitelist provider models in openclaw.json (agents.defaults.models)
+###############################################################################
+update_openclaw_model_whitelist() {
+    local provider="$1"
+    local model_refs="${OPENCLAW_MODEL_REFS[$provider]:-}"
+    if [ -z "$model_refs" ]; then
+        return 0
+    fi
+
+    local json_file=""
+    for candidate in \
+        "/var/lib/openclaw-svc/.openclaw/openclaw.json" \
+        "/home/openclaw/.openclaw/openclaw.json"; do
+        if [ -f "$candidate" ]; then
+            json_file="$candidate"
+            break
+        fi
+    done
+    if [ -z "$json_file" ]; then
+        warn "openclaw.json not found. Skipping model whitelist update for '$provider'."
+        return 0
+    fi
+
+    info "Updating openclaw.json model whitelist for '$provider' ..."
+    # shellcheck disable=SC2086
+    python3 - "$json_file" $model_refs << 'PYEOF'
+import sys, json
+json_file   = sys.argv[1]
+model_refs  = sys.argv[2:]
+with open(json_file, encoding='utf-8') as f:
+    cfg = json.load(f)
+cfg.setdefault('agents', {}).setdefault('defaults', {}).setdefault('models', {})
+models = cfg['agents']['defaults']['models']
+added = [r for r in model_refs if r not in models]
+for r in added:
+    models[r] = {}
+if added:
+    with open(json_file, 'w', encoding='utf-8') as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+    print(f"  Added to openclaw.json: {', '.join(added)}", flush=True)
+else:
+    print(f"  All models already in openclaw.json whitelist", flush=True)
+PYEOF
 }
 
 ###############################################################################
@@ -620,11 +875,37 @@ MEOF
         add_to_whitelist "$d"
     done
 
+    # Patch openclaw JS files for non-native providers (e.g. deepseek, glm5)
+    patch_openclaw_provider "$safename"
+
+    # Whitelist provider models in openclaw.json
+    update_openclaw_model_whitelist "$safename"
+
     reencrypt_secrets
     reload_squid
     restart_openclaw
 
     printf "\n${GREEN}LLM provider '%s' added successfully.${RESET}\n" "$name"
+}
+
+###############################################################################
+# Command: patch-provider <provider>
+###############################################################################
+cmd_patch_provider() {
+    require_root
+    local provider="${1:-}"
+    if [ -z "$provider" ]; then
+        fail "Usage: codeshield-config patch-provider <provider>"
+        printf "  Supported: %s\n" "${!OPENCLAW_JS_PATCH_PROVIDERS[*]}"
+        exit 1
+    fi
+    if [ -z "${OPENCLAW_JS_PATCH_PROVIDERS[$provider]:-}" ]; then
+        info "'$provider' is natively supported by openclaw — no JS patching needed."
+        exit 0
+    fi
+    patch_openclaw_provider "$provider"
+    update_openclaw_model_whitelist "$provider"
+    ok "patch-provider '$provider' complete."
 }
 
 ###############################################################################
@@ -691,16 +972,20 @@ CODE SHIELD Configuration Manager
 Usage: codeshield-config <command> [args]
 
 Commands:
-  show                     Show current configuration (secrets masked)
-  edit                     Interactive edit of all secrets
-  set KEY=VALUE            Set a single configuration key
-  add-channel              Interactive: add a messaging channel (WeCom/Feishu/Discord/Custom)
-  add-model [provider]     Add an LLM provider (interactive menu)
-                           Providers: openai, openai-oauth, anthropic, deepseek, glm5, kimi, minimax, custom
-  list-channels            List configured channels
-  list-models              List configured LLM providers
-  proxy-allow <domain>     Add a domain to the Squid proxy whitelist
-  help                     Show this help message
+  show                       Show current configuration (secrets masked)
+  edit                       Interactive edit of all secrets
+  set KEY=VALUE              Set a single configuration key
+  add-channel                Interactive: add a messaging channel (WeCom/Feishu/Discord/Custom)
+  add-model [provider]       Add an LLM provider (interactive menu)
+                             Providers: openai, openai-oauth, anthropic, deepseek, glm5, kimi, minimax, custom
+                             Non-native providers (deepseek, glm5) automatically patch openclaw JS files.
+  patch-provider <provider>  Manually patch openclaw JS files for a non-native provider.
+                             Use after openclaw updates to re-apply provider registration.
+                             Supported: deepseek, glm5
+  list-channels              List configured channels
+  list-models                List configured LLM providers
+  proxy-allow <domain>       Add a domain to the Squid proxy whitelist
+  help                       Show this help message
 
 Examples:
   codeshield-config show
@@ -710,6 +995,7 @@ Examples:
   codeshield-config add-model minimax
   codeshield-config add-channel
   codeshield-config proxy-allow api.example.com
+  codeshield-config patch-provider deepseek
 HELPEOF
 }
 
@@ -726,6 +1012,7 @@ main() {
         set)            cmd_set "${1:-}" ;;
         add-channel)    cmd_add_channel ;;
         add-model)      cmd_add_model "${1:-}" ;;
+        patch-provider) cmd_patch_provider "${1:-}" ;;
         list-channels)  cmd_list_channels ;;
         list-models)    cmd_list_models ;;
         proxy-allow)    cmd_proxy_allow "${1:-}" ;;

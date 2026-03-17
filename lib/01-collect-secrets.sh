@@ -186,6 +186,13 @@ else
         printf 'KIMI_API_KEY=%s\n' "${KIMI_API_KEY:-}"
         printf 'OPENCLAW_GATEWAY_TOKEN=%s\n' "$OPENCLAW_GATEWAY_TOKEN"
         printf 'QDRANT_API_KEY=%s\n' "$QDRANT_API_KEY"
+        # Proxy settings: openclaw-svc is network-isolated (iptables blocks
+        # non-loopback), so all outbound traffic must go through the Squid proxy
+        printf '# Proxy (required for network-isolated openclaw-svc)\n'
+        printf 'HTTPS_PROXY=http://127.0.0.1:3128\n'
+        printf 'HTTP_PROXY=http://127.0.0.1:3128\n'
+        printf 'https_proxy=http://127.0.0.1:3128\n'
+        printf 'http_proxy=http://127.0.0.1:3128\n'
     } > "$SECRETS_FILE"
 
     chmod 0600 "$SECRETS_FILE"

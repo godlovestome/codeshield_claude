@@ -1,7 +1,7 @@
-// CODE SHIELD V3.0.11 -- Node.js proxy preload script
+// CODE SHIELD V3.1.0 -- Node.js proxy preload script
 // Loaded via NODE_OPTIONS="--import /usr/local/lib/openclaw-codeshield/proxy-preload.mjs"
 //
-// V3.0.11 CHANGE: Switched from ProxyAgent to EnvHttpProxyAgent.
+// V3.1.0 CHANGE: Switched from ProxyAgent to EnvHttpProxyAgent.
 //
 // Problem (V3.0.10): ProxyAgent routes ALL traffic through Squid — including
 // requests to local services (Ollama 127.0.0.1:11434, Qdrant 127.0.0.1:6333,

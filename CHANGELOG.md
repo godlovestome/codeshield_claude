@@ -4,7 +4,7 @@ All notable changes to CODE SHIELD are documented here.
 
 ---
 
-## [3.0.11] — 2026-03-21
+## [3.1.0] — 2026-03-21
 
 ### Fix: proxy-preload breaks local services + Jarvis Memory secret export / 修复：代理预加载阻断本地服务 + Jarvis Memory 密钥导出
 

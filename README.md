@@ -1,14 +1,14 @@
-# CODE SHIELD V3.1.0
+# CODE SHIELD V3.1.1
 
 **AI Agent Network Security Hardening System**
 
-CODE SHIELD V3 is a comprehensive, production-grade security framework designed to protect AI agents running on Linux servers. It provides defense-in-depth through user isolation, secret encryption (systemd-creds), outbound proxy whitelisting, prompt injection detection, container privilege reduction, systemd sandbox hardening, and a guardian service that automatically re-applies protection after agent updates. V3.1.0 fixes the proxy preload to use `EnvHttpProxyAgent` (respects `NO_PROXY`) so local services (Ollama, Qdrant, Redis) bypass Squid, and adds secure `QDRANT_API_KEY` export for Jarvis Memory cron jobs via `/run/openclaw-memory/secrets.env`. Originally built to harden OpenClaw, CODE SHIELD achieves a security score of **9.5/10** across **56 automated audit checks**.
+CODE SHIELD V3 is a comprehensive, production-grade security framework designed to protect AI agents running on Linux servers. It provides defense-in-depth through user isolation, secret encryption (systemd-creds), outbound proxy whitelisting, prompt injection detection, container privilege reduction, systemd sandbox hardening, and a guardian service that automatically re-applies protection after agent updates. V3.1.1 fixes a critical DOCKER-USER gap: Qdrant gRPC port 6334 was not blocked, and DOCKER-USER rules were lost after Docker restarts. A new `codeshield-docker-user.service` now re-applies all DOCKER-USER rules automatically after Docker restarts. Originally built to harden OpenClaw, CODE SHIELD achieves a security score of **9.5/10** across **58 automated audit checks**.
 
 ---
 
-**CODE SHIELD V3.1.0 -- AI Agent 网络安全加固系统**
+**CODE SHIELD V3.1.1 -- AI Agent 网络安全加固系统**
 
-CODE SHIELD V3 是一套完整的生产级安全框架，专为运行在 Linux 服务器上的 AI Agent 设计。通过用户隔离、密钥加密（systemd-creds）、出站代理白名单、提示注入检测、容器权限削减、systemd 沙箱加固和 Guardian 自动恢复服务，提供纵深防御。V3.1.0 修复代理预加载使用 `EnvHttpProxyAgent`（尊重 `NO_PROXY`），本地服务（Ollama、Qdrant、Redis）绕过 Squid；新增 Jarvis Memory cron 任务的安全 `QDRANT_API_KEY` 导出（`/run/openclaw-memory/secrets.env`）。本系统通过 **56 项**自动化安全审计实现 **9.5/10** 的安全评分。
+CODE SHIELD V3 是一套完整的生产级安全框架，专为运行在 Linux 服务器上的 AI Agent 设计。通过用户隔离、密钥加密（systemd-creds）、出站代理白名单、提示注入检测、容器权限削减、systemd 沙箱加固和 Guardian 自动恢复服务，提供纵深防御。V3.1.1 修复 DOCKER-USER 关键缺口：Qdrant gRPC 端口 6334 未被阻断，且 Docker 重启后 DOCKER-USER 规则丢失。新增 `codeshield-docker-user.service`，在 Docker 重启后自动重新应用所有 DOCKER-USER 规则。本系统通过 **58 项**自动化安全审计实现 **9.5/10** 的安全评分。
 
 ---
 
@@ -37,7 +37,7 @@ The installer is interactive only when collecting API keys (Telegram, Brave, Ope
 | Protected Asset / 保护对象 | Threat / 威胁 | Defense / 防护措施 |
 |---|---|---|
 | API Keys & Tokens | Inline credential exposure, disk theft | **Secrets encrypted at rest** (systemd-creds, host key bound); decrypted to tmpfs (RAM) only at runtime; keys fully deleted from openclaw.json |
-| Qdrant Vector DB (JARVIS + TRUE RECALL) | Unauthorized access, container escape, data exfiltration | API key authentication, port bound to 127.0.0.1, DOCKER-USER iptables rules, **cap_drop ALL**, **no-new-privileges**, **read_only filesystem** with tmpfs |
+| Qdrant Vector DB (JARVIS + TRUE RECALL) | Unauthorized access, container escape, data exfiltration | API key authentication, ports 6333+6334 bound to 127.0.0.1, **DOCKER-USER iptables** (ESTABLISHED/RELATED, loopback, 6333/6334 DROP + optional 6379/5432), **cap_drop ALL**, **no-new-privileges**, **read_only filesystem** with tmpfs, `codeshield-docker-user.service` survives Docker restarts |
 | Telegram Bot | Token theft, message interception | Keys managed by CODE SHIELD, encrypted at rest, not stored in openclaw.json |
 | OpenClaw Agent Process | Privilege escalation, lateral movement | Isolated `openclaw-svc` user, removed from docker/sudo groups, **systemd sandbox** (ProtectSystem=strict, CapabilityBoundingSet=, RestrictAddressFamilies, SystemCallFilter, ProtectHome=yes) |
 | Server SSH | Brute force, tunneling, password attacks | Password auth disabled, MaxAuthTries=3, MaxSessions=3, **AllowTcpForwarding=no**, **AllowAgentForwarding=no**, fail2ban with 1-hour bans, sshd_config.d drop-in |
@@ -250,9 +250,9 @@ Run the audit at any time / 随时运行安全审计：
 security-audit.sh
 ```
 
-### 56-Item Checklist / 56 项检查清单
+### 58-Item Checklist / 58 项检查清单
 
-**Network Security / 网络安全 (10)**
+**Network Security / 网络安全 (12)**
 - firewall active (UFW or netfilter-persistent) / 防火墙已激活
 - ssh password disabled / SSH 密码登录已禁用
 - ssh keyboard-interactive disabled / SSH 键盘交互已禁用
@@ -262,6 +262,8 @@ security-audit.sh
 - zerotier online / ZeroTier 在线
 - zerotier private network / ZeroTier 私有网络
 - docker-user drop rules / Docker 用户 DROP 规则
+- docker-user qdrant grpc blocked / Docker 用户 Qdrant gRPC 已阻断 *(V3.1.1)*
+- docker-user rules persist service / Docker 用户规则持久化服务已启用 *(V3.1.1)*
 - dns direct query blocked / DNS 直连查询已阻断
 
 **Access Control / 访问控制 (11)**
@@ -467,7 +469,8 @@ final_score = min(base + pass_bonus + extra_bonus, 10.0)
 | V3.0.8  | 56/56           | 9.5/10 |
 | V3.0.9  | 56/56           | 9.5/10 |
 | V3.0.10 | 56/56           | 9.5/10 |
-| **V3.1.0** | **56/56**    | **9.5/10** |
+| V3.1.0  | 56/56           | 9.5/10 |
+| **V3.1.1** | **58/58**    | **9.5/10** |
 
 Professional audit score (manual review) / 专业审计评分（人工评审）: **~9.0/10** (up from 7.3 in V3.0.0)
 
@@ -529,6 +532,33 @@ codeshield-v3/
 ---
 
 ## Changelog / 版本历史
+
+### V3.1.1 (2026-03-21) — DOCKER-USER Security Gap Fix / DOCKER-USER 安全缺口修复
+
+**Fix 1: Qdrant gRPC port 6334 not blocked in DOCKER-USER / 修复 1：Qdrant gRPC 端口 6334 未在 DOCKER-USER 中阻断**
+- **Root cause / 根因:** `lib/03-qdrant.sh` only blocked port 6333 (HTTP API) in the DOCKER-USER chain and only bound 6333 to `127.0.0.1` in docker-compose. Port 6334 (gRPC) was left exposed on `0.0.0.0`, allowing external attackers to bypass UFW (Docker bypasses UFW) and access Qdrant directly via gRPC.
+- **根因描述：** `lib/03-qdrant.sh` 仅在 DOCKER-USER 链中阻断了端口 6333（HTTP API），且在 docker-compose 中仅将 6333 绑定到 `127.0.0.1`。端口 6334（gRPC）暴露在 `0.0.0.0`，外部攻击者可绕过 UFW（Docker 绕过 UFW）通过 gRPC 直接访问 Qdrant。
+- **Fix / 修复:** Both ports 6333 and 6334 now bound to `127.0.0.1` in docker-compose. Both blocked in DOCKER-USER chain. Added ESTABLISHED,RELATED and loopback rules. Optional Redis (6379) and PostgreSQL (5432) rules added when containers detected.
+- **修复方式：** docker-compose 中 6333 和 6334 均绑定到 `127.0.0.1`。两者在 DOCKER-USER 链中均被阻断。新增 ESTABLISHED,RELATED 和 loopback 规则。检测到容器时自动添加 Redis (6379) 和 PostgreSQL (5432) 可选规则。
+
+**Fix 2: DOCKER-USER rules lost after Docker restart / 修复 2：Docker 重启后 DOCKER-USER 规则丢失**
+- **Root cause / 根因:** Docker flushes and recreates the DOCKER-USER chain every time it restarts. `netfilter-persistent save` saves the rules to disk, but Docker overwrites them on restart. The guardian service only handles OpenClaw updates, not Docker restarts.
+- **根因描述：** Docker 每次重启时清空并重建 DOCKER-USER 链。`netfilter-persistent save` 将规则保存到磁盘，但 Docker 重启时会覆盖。Guardian 服务仅处理 OpenClaw 更新，不处理 Docker 重启。
+- **Fix / 修复:** New `codeshield-docker-user.service` (systemd oneshot, `After=docker.service`) automatically re-applies all DOCKER-USER rules whenever Docker restarts.
+- **修复方式：** 新增 `codeshield-docker-user.service`（systemd oneshot，`After=docker.service`），在 Docker 重启时自动重新应用所有 DOCKER-USER 规则。
+
+**New audit checks / 新增审计检查（58 total，原 56）：**
+- `docker-user qdrant grpc blocked` — Verifies DOCKER-USER chain blocks port 6334
+- `docker-user rules persist service` — Verifies `codeshield-docker-user.service` is enabled
+
+**Files changed / 修改文件：**
+
+| File / 文件 | Change / 变更 |
+|---|---|
+| `lib/03-qdrant.sh` | Bind 6334 to 127.0.0.1; complete DOCKER-USER rules (ESTABLISHED/RELATED, loopback, 6333, 6334, optional 6379/5432); deploy `codeshield-docker-user.service` |
+| `scripts/security-audit.sh` | 2 new checks (58 total); updated JSON version to 3.1.1 |
+| `install.sh` | Version bump to 3.1.1 |
+| `scripts/codeshield-config` | Header version bump |
 
 ### V3.1.0 (2026-03-21) — Proxy preload fix for local services & Jarvis Memory secret export / 代理预加载修复与 Jarvis Memory 密钥导出
 

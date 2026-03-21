@@ -48,15 +48,18 @@ if [ -n "$QDRANT_COMPOSE" ]; then
         cp "$QDRANT_COMPOSE" "${QDRANT_COMPOSE}.bak.$(date +%s)"
 
         # Ensure port binds to 127.0.0.1 only (LC_ALL=C for safe sed on config files)
-        if grep -q '0\.0\.0\.0:6333' "$QDRANT_COMPOSE"; then
-            LC_ALL=C sed -i 's/0\.0\.0\.0:6333/127.0.0.1:6333/g' "$QDRANT_COMPOSE"
-            ok "Qdrant port bound to 127.0.0.1:6333"
-        elif grep -q '"6333:6333"' "$QDRANT_COMPOSE" || grep -q "'6333:6333'" "$QDRANT_COMPOSE"; then
-            LC_ALL=C sed -i "s|6333:6333|127.0.0.1:6333:6333|g" "$QDRANT_COMPOSE"
-            ok "Qdrant port bound to 127.0.0.1:6333"
-        else
-            ok "Qdrant port binding already looks restricted or custom."
-        fi
+        # V3.1.1: Also bind gRPC port 6334 to localhost
+        for QPORT in 6333 6334; do
+            if grep -q "0\.0\.0\.0:${QPORT}" "$QDRANT_COMPOSE"; then
+                LC_ALL=C sed -i "s/0\.0\.0\.0:${QPORT}/127.0.0.1:${QPORT}/g" "$QDRANT_COMPOSE"
+                ok "Qdrant port bound to 127.0.0.1:${QPORT}"
+            elif grep -qE "\"${QPORT}:${QPORT}\"|'${QPORT}:${QPORT}'" "$QDRANT_COMPOSE"; then
+                LC_ALL=C sed -i "s|${QPORT}:${QPORT}|127.0.0.1:${QPORT}:${QPORT}|g" "$QDRANT_COMPOSE"
+                ok "Qdrant port bound to 127.0.0.1:${QPORT}"
+            else
+                ok "Qdrant port ${QPORT} binding already looks restricted or custom."
+            fi
+        done
 
         # Check if QDRANT__SERVICE__API_KEY is already set
         if ! grep -q 'QDRANT__SERVICE__API_KEY' "$QDRANT_COMPOSE"; then
@@ -138,20 +141,127 @@ else
 fi
 
 ###############################################################################
-# 3. Docker IPTABLES -- block external access to Qdrant
+# 3. Docker IPTABLES -- block external access to Docker containers
+#    V3.1.1: Complete DOCKER-USER rules (6333+6334, ESTABLISHED/RELATED,
+#            loopback, optional Redis/PostgreSQL) + systemd persistence
 ###############################################################################
 if [ "$DRY_RUN" -eq 0 ]; then
-    # Add DOCKER-USER chain rule to drop external access to 6333
     if iptables -L DOCKER-USER &>/dev/null 2>&1; then
-        if ! iptables -C DOCKER-USER -p tcp --dport 6333 ! -s 127.0.0.1 -j DROP &>/dev/null 2>&1; then
-            iptables -I DOCKER-USER -p tcp --dport 6333 ! -s 127.0.0.1 -j DROP
-            ok "Iptables DOCKER-USER rule: drop external Qdrant access."
-        else
-            ok "DOCKER-USER Qdrant drop rule already exists."
+        # ESTABLISHED,RELATED: allow return traffic for existing connections
+        if ! iptables -C DOCKER-USER -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT &>/dev/null 2>&1; then
+            iptables -I DOCKER-USER 1 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+            ok "DOCKER-USER: ESTABLISHED,RELATED accept rule added."
         fi
+
+        # Loopback: allow localhost access to Docker containers
+        if ! iptables -C DOCKER-USER -i lo -j ACCEPT &>/dev/null 2>&1; then
+            iptables -I DOCKER-USER 2 -i lo -j ACCEPT
+            ok "DOCKER-USER: loopback accept rule added."
+        fi
+
+        # Block external access to Qdrant HTTP (6333) and gRPC (6334)
+        for QPORT in 6333 6334; do
+            if ! iptables -C DOCKER-USER -p tcp --dport "$QPORT" ! -s 127.0.0.1 -j DROP &>/dev/null 2>&1; then
+                iptables -A DOCKER-USER -p tcp --dport "$QPORT" ! -s 127.0.0.1 -j DROP
+                ok "DOCKER-USER: drop external access to port $QPORT."
+            else
+                ok "DOCKER-USER: port $QPORT drop rule already exists."
+            fi
+        done
+
+        # Optional: block Redis (6379) and PostgreSQL (5432) if containers exist
+        for DBPORT in 6379 5432; do
+            if docker ps --format '{{.Ports}}' 2>/dev/null | grep -q ":${DBPORT}->"; then
+                if ! iptables -C DOCKER-USER -p tcp --dport "$DBPORT" ! -s 127.0.0.1 -j DROP &>/dev/null 2>&1; then
+                    iptables -A DOCKER-USER -p tcp --dport "$DBPORT" ! -s 127.0.0.1 -j DROP
+                    ok "DOCKER-USER: drop external access to port $DBPORT."
+                fi
+            fi
+        done
+
+        ok "DOCKER-USER chain fully configured."
     else
         warn "DOCKER-USER chain not found. Docker iptables rules may not be active."
     fi
+
+    # Persist rules so netfilter-persistent has a copy
+    netfilter-persistent save >/dev/null 2>&1 || true
+
+    ###########################################################################
+    # Deploy codeshield-docker-user.service: re-applies DOCKER-USER rules
+    # after Docker restarts (Docker flushes and recreates the chain on restart)
+    ###########################################################################
+    local DOCKER_USER_SCRIPT="$CS_SBIN_DIR/codeshield-docker-user"
+    cat > "$DOCKER_USER_SCRIPT" << 'DUSCRIPT'
+#!/usr/bin/env bash
+# CODE SHIELD V3.1.1 -- Re-apply DOCKER-USER iptables rules after Docker restart
+# Docker flushes and recreates the DOCKER-USER chain on every restart,
+# discarding any custom rules added by Code Shield or netfilter-persistent.
+set -uo pipefail
+
+# Wait for Docker to finish creating the chain
+for i in $(seq 1 10); do
+    iptables -L DOCKER-USER &>/dev/null 2>&1 && break
+    sleep 1
+done
+
+if ! iptables -L DOCKER-USER &>/dev/null 2>&1; then
+    echo "[WARN] DOCKER-USER chain not found after waiting. Skipping."
+    exit 0
+fi
+
+# ESTABLISHED,RELATED
+if ! iptables -C DOCKER-USER -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT &>/dev/null 2>&1; then
+    iptables -I DOCKER-USER 1 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+fi
+
+# Loopback
+if ! iptables -C DOCKER-USER -i lo -j ACCEPT &>/dev/null 2>&1; then
+    iptables -I DOCKER-USER 2 -i lo -j ACCEPT
+fi
+
+# Qdrant HTTP + gRPC
+for PORT in 6333 6334; do
+    if ! iptables -C DOCKER-USER -p tcp --dport "$PORT" ! -s 127.0.0.1 -j DROP &>/dev/null 2>&1; then
+        iptables -A DOCKER-USER -p tcp --dport "$PORT" ! -s 127.0.0.1 -j DROP
+    fi
+done
+
+# Optional: Redis, PostgreSQL (only if containers expose these ports)
+for PORT in 6379 5432; do
+    if docker ps --format '{{.Ports}}' 2>/dev/null | grep -q ":${PORT}->"; then
+        if ! iptables -C DOCKER-USER -p tcp --dport "$PORT" ! -s 127.0.0.1 -j DROP &>/dev/null 2>&1; then
+            iptables -A DOCKER-USER -p tcp --dport "$PORT" ! -s 127.0.0.1 -j DROP
+        fi
+    fi
+done
+
+netfilter-persistent save >/dev/null 2>&1 || true
+echo "[OK] DOCKER-USER rules re-applied at $(date -Iseconds)"
+DUSCRIPT
+    chmod 0755 "$DOCKER_USER_SCRIPT"
+
+    cat > /etc/systemd/system/codeshield-docker-user.service << EOF
+[Unit]
+Description=CODE SHIELD V3 - Re-apply DOCKER-USER iptables rules
+Documentation=https://github.com/godlovestome/codeshield_claude
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=$DOCKER_USER_SCRIPT
+StandardOutput=append:$CS_LOG_DIR/docker-user.log
+StandardError=append:$CS_LOG_DIR/docker-user.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable codeshield-docker-user.service --now 2>/dev/null || true
+    ok "codeshield-docker-user.service deployed (re-applies rules after Docker restart)."
 fi
 
 ok "Qdrant security configuration complete."

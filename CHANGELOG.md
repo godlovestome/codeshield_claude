@@ -4,6 +4,58 @@ All notable changes to CODE SHIELD are documented here.
 
 ---
 
+## [3.1.1] — 2026-03-21
+
+### Security Fix: DOCKER-USER chain incomplete — Qdrant gRPC port 6334 exposed + rules lost on Docker restart / 安全修复：DOCKER-USER 链不完整——Qdrant gRPC 端口 6334 暴露 + Docker 重启后规则丢失
+
+#### Fix 1 — Port 6334 (gRPC) not blocked in DOCKER-USER / 端口 6334（gRPC）未在 DOCKER-USER 中阻断
+
+- **Problem / 问题:** `lib/03-qdrant.sh` only added a DOCKER-USER DROP rule for port 6333 (Qdrant HTTP API) and only bound 6333 to `127.0.0.1` in docker-compose. Port 6334 (Qdrant gRPC interface) was left at `0.0.0.0`, and no DOCKER-USER rule existed for it. Since Docker bypasses UFW/netfilter-persistent firewall rules, external attackers could access Qdrant's gRPC endpoint directly from the internet. Although Qdrant API key authentication applies to gRPC as well, exposing the port unnecessarily increases attack surface.
+- **问题描述：** `lib/03-qdrant.sh` 仅为端口 6333（Qdrant HTTP API）添加了 DOCKER-USER DROP 规则，且在 docker-compose 中仅将 6333 绑定到 `127.0.0.1`。端口 6334（Qdrant gRPC 接口）保留在 `0.0.0.0`，且无 DOCKER-USER 规则。由于 Docker 绕过 UFW/netfilter-persistent 防火墙规则，外部攻击者可从互联网直接访问 Qdrant 的 gRPC 端点。虽然 Qdrant API 密钥认证也适用于 gRPC，但不必要地暴露端口增加了攻击面。
+- **Fix / 修复:**
+  - docker-compose: Both 6333 and 6334 bound to `127.0.0.1`
+  - DOCKER-USER chain: Complete rule set:
+    1. `ESTABLISHED,RELATED` → ACCEPT (return traffic)
+    2. loopback (`-i lo`) → ACCEPT (localhost access)
+    3. Port 6333 `! -s 127.0.0.1` → DROP (Qdrant HTTP)
+    4. Port 6334 `! -s 127.0.0.1` → DROP (Qdrant gRPC)
+    5. Port 6379 `! -s 127.0.0.1` → DROP (Redis, if container detected)
+    6. Port 5432 `! -s 127.0.0.1` → DROP (PostgreSQL, if container detected)
+- **File changed / 修改文件:** `lib/03-qdrant.sh`
+
+#### Fix 2 — DOCKER-USER rules lost after Docker restart / Docker 重启后 DOCKER-USER 规则丢失
+
+- **Problem / 问题:** Docker flushes and recreates the DOCKER-USER chain every time the Docker daemon restarts (`systemctl restart docker`). `netfilter-persistent save` saves the rules to `/etc/iptables/rules.v4`, but Docker ignores this file and rebuilds its own chains from scratch. The Guardian service (`openclaw-guardian`) only monitors OpenClaw package updates, not Docker restarts. Result: after any Docker restart (e.g., kernel update reboot, `apt upgrade docker-ce`), all DOCKER-USER rules are gone.
+- **问题描述：** Docker 守护进程每次重启时（`systemctl restart docker`）清空并重建 DOCKER-USER 链。`netfilter-persistent save` 将规则保存到 `/etc/iptables/rules.v4`，但 Docker 忽略此文件并从头重建自己的链。Guardian 服务（`openclaw-guardian`）仅监控 OpenClaw 包更新，不监控 Docker 重启。结果：每次 Docker 重启（如内核更新重启、`apt upgrade docker-ce`）后，所有 DOCKER-USER 规则消失。
+- **Fix / 修复:** New `codeshield-docker-user.service`:
+  - systemd oneshot service with `RemainAfterExit=yes`
+  - `After=docker.service`, `Requires=docker.service`
+  - Runs `/usr/local/sbin/codeshield-docker-user` script which re-applies all DOCKER-USER rules
+  - Waits up to 10 seconds for DOCKER-USER chain to be ready
+  - Calls `netfilter-persistent save` after applying rules
+  - Enabled at install time, runs automatically on every boot and Docker restart
+- **修复方式：** 新增 `codeshield-docker-user.service`：
+  - systemd oneshot 服务，`RemainAfterExit=yes`
+  - `After=docker.service`，`Requires=docker.service`
+  - 运行 `/usr/local/sbin/codeshield-docker-user` 脚本重新应用所有 DOCKER-USER 规则
+  - 等待最多 10 秒直到 DOCKER-USER 链就绪
+  - 应用规则后调用 `netfilter-persistent save`
+  - 安装时启用，每次启动和 Docker 重启时自动运行
+- **Files changed / 修改文件:** `lib/03-qdrant.sh` (service deployment)
+
+#### New Audit Checks / 新增审计检查 (58 total, up from 56)
+
+- `docker-user qdrant grpc blocked` — Verifies DOCKER-USER chain contains DROP rule for port 6334
+- `docker-user rules persist service` — Verifies `codeshield-docker-user.service` is enabled
+
+#### Version Bump
+
+- `install.sh`: `CS_VERSION` → `3.1.1`
+- `scripts/codeshield-config`: Header → `V3.1.1`
+- `scripts/security-audit.sh`: JSON version → `3.1.1`, check count → 58
+
+---
+
 ## [3.1.0] — 2026-03-21
 
 ### Fix: proxy-preload breaks local services + Jarvis Memory secret export / 修复：代理预加载阻断本地服务 + Jarvis Memory 密钥导出

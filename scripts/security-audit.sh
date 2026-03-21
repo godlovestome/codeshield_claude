@@ -79,7 +79,7 @@ check_maybe() {
 if [ "$QUIET" -eq 0 ]; then
     printf "\n${BOLD}${CYAN}"
     printf " CODE SHIELD V3 -- Security Audit\n"
-    printf " Running %s checks ...\n" "54"
+    printf " Running %s checks ...\n" "56"
     printf "${RESET}\n"
 fi
 
@@ -115,6 +115,12 @@ check "zerotier private network" \
 
 check "docker-user drop rules" \
     "iptables -L DOCKER-USER 2>/dev/null | grep -q DROP"
+
+check "docker-user qdrant grpc blocked" \
+    "iptables -L DOCKER-USER 2>/dev/null | grep -q 'dpt:6334'"
+
+check "docker-user rules persist service" \
+    "systemctl is-enabled codeshield-docker-user.service 2>/dev/null | grep -qE 'enabled|static'"
 
 check "dns direct query blocked" \
     "SVC_UID=\$(id -u openclaw-svc 2>/dev/null) && iptables -S OUTPUT 2>/dev/null | grep -qE \"(uid-owner.*\$SVC_UID.*dport 53.*DROP|! -d 127.0.0.0/8.*uid-owner.*\$SVC_UID.*DROP)\""
@@ -389,7 +395,7 @@ if [ "$JSON_MODE" -eq 1 ]; then
         _json_checks="${_json_checks}{\"section\":\"${section}\",\"name\":\"${name}\",\"status\":\"${status}\"}"
         _first=0
     done <<< "$_JSON_RESULTS"
-    printf '{"version":"3.0.5","timestamp":"%s","pass":%d,"fail":%d,"optional":%d,"total":%d,"score":%s,"checks":[%s]}\n' \
+    printf '{"version":"3.1.1","timestamp":"%s","pass":%d,"fail":%d,"optional":%d,"total":%d,"score":%s,"checks":[%s]}\n' \
         "$(date -Iseconds)" "$PASS" "$FAIL" "$MAYBE" "$TOTAL" "$FINAL_SCORE" "$_json_checks"
 fi
 

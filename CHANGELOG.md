@@ -4,6 +4,35 @@ All notable changes to CODE SHIELD are documented here.
 
 ---
 
+## [3.0.11] — 2026-03-21
+
+### Fix: proxy-preload breaks local services + Jarvis Memory secret export / 修复：代理预加载阻断本地服务 + Jarvis Memory 密钥导出
+
+**Problem 1 / 问题1:** V3.0.10's `ProxyAgent` routes **all** `fetch()` traffic through Squid — including requests to local services (Ollama at `127.0.0.1:11434`, Qdrant at `127.0.0.1:6333`). Squid blocks `CONNECT` to localhost ports, causing OpenClaw's `memory_search` to fail with `TypeError: fetch failed` when using a local Ollama embedding provider (e.g., `qwen3-embedding:4b`).
+
+**V3.0.10 的 `ProxyAgent` 将所有 `fetch()` 流量路由到 Squid——包括到本地服务（Ollama `127.0.0.1:11434`、Qdrant `127.0.0.1:6333`）的请求。Squid 阻断到 localhost 端口的 `CONNECT`，导致 OpenClaw 使用本地 Ollama 嵌入模型（如 `qwen3-embedding:4b`）时 `memory_search` 报错 `TypeError: fetch failed`。**
+
+**Fix 1 / 修复1:** Replaced `ProxyAgent` with `EnvHttpProxyAgent` in `proxy-preload.mjs`. `EnvHttpProxyAgent` reads `NO_PROXY` from the environment and bypasses the proxy for matching hosts. External API calls still route through Squid.
+
+**将 `proxy-preload.mjs` 中的 `ProxyAgent` 替换为 `EnvHttpProxyAgent`。`EnvHttpProxyAgent` 读取环境变量 `NO_PROXY`，对匹配的主机绕过代理。外部 API 调用仍通过 Squid 路由。**
+
+**Problem 2 / 问题2:** Jarvis Memory cron jobs (running as `openclaw` user) need `QDRANT_API_KEY` but the key is only available in root-owned `/run/openclaw-codeshield/secrets.env`. Storing the key in plaintext `~/.memory_env` is a security risk.
+
+**Jarvis Memory 的 cron 任务（以 `openclaw` 用户运行）需要 `QDRANT_API_KEY`，但该密钥仅存在于 root 拥有的 `/run/openclaw-codeshield/secrets.env` 中。将密钥明文存储在 `~/.memory_env` 有安全风险。**
+
+**Fix 2 / 修复2:** `codeshield-secrets-unseal` now exports a restricted subset (`QDRANT_API_KEY` only) to `/run/openclaw-memory/secrets.env` with `root:openclaw 640` permissions. Jarvis Memory's `.memory_env` sources this file instead of storing the key directly.
+
+**`codeshield-secrets-unseal` 现在将受限子集（仅 `QDRANT_API_KEY`）导出到 `/run/openclaw-memory/secrets.env`，权限为 `root:openclaw 640`。Jarvis Memory 的 `.memory_env` 从该文件加载密钥，而非直接存储。**
+
+**Changes / 变更:**
+
+| File / 文件 | Change / 变更 |
+|---|---|
+| `scripts/proxy-preload.mjs` | `ProxyAgent` → `EnvHttpProxyAgent` (respects `NO_PROXY`) / 使用 `EnvHttpProxyAgent`（尊重 `NO_PROXY`） |
+| `scripts/codeshield-secrets-unseal` | Export `QDRANT_API_KEY` to `/run/openclaw-memory/secrets.env` for Jarvis Memory cron / 导出 `QDRANT_API_KEY` 供 Jarvis Memory cron 使用 |
+
+---
+
 ## [3.0.10] — 2026-03-17
 
 ### Fix: web_fetch bypasses proxy despite NODE_USE_ENV_PROXY — undici ProxyAgent preload / 修复：web_fetch 绕过代理——undici ProxyAgent 预加载

@@ -1,28 +1,30 @@
-// CODE SHIELD V3.0.10 -- Node.js proxy preload script
+// CODE SHIELD V3.0.11 -- Node.js proxy preload script
 // Loaded via NODE_OPTIONS="--import /usr/local/lib/openclaw-codeshield/proxy-preload.mjs"
 //
-// Problem: NODE_USE_ENV_PROXY=1 only makes the undici *global dispatcher* respect
-// HTTP_PROXY/HTTPS_PROXY.  If OpenClaw's web_fetch (or any library) creates its
-// own undici Client/Pool or uses Node.js http/https modules directly, the proxy
-// is bypassed entirely.  Since iptables DROPs all non-loopback traffic from
-// openclaw-svc, those requests silently fail with ETIMEDOUT.
+// V3.0.11 CHANGE: Switched from ProxyAgent to EnvHttpProxyAgent.
 //
-// Solution: This preload script runs before any application code and explicitly
-// sets the undici global dispatcher to a ProxyAgent.  This covers:
-//   - globalThis.fetch() (native Node.js 22+ fetch, backed by undici)
-//   - Any library that uses undici's global dispatcher
+// Problem (V3.0.10): ProxyAgent routes ALL traffic through Squid — including
+// requests to local services (Ollama 127.0.0.1:11434, Qdrant 127.0.0.1:6333,
+// Redis 127.0.0.1:6379). Squid blocks CONNECT to localhost ports, causing
+// OpenClaw's memory_search embeddings to fail with "TypeError: fetch failed"
+// when using a local Ollama provider.
 //
-// For http/https module users (axios, node-fetch, got, etc.), the http_proxy
-// and https_proxy env vars are already set, and most libraries respect them.
-// This preload is specifically for the undici/fetch path.
+// Fix: EnvHttpProxyAgent reads HTTP_PROXY/HTTPS_PROXY AND NO_PROXY from the
+// environment. Local services listed in NO_PROXY bypass the proxy automatically.
+// External API calls (api.openai.com, api.telegram.org, etc.) still route
+// through Squid as intended.
+//
+// Required env vars (set in secrets.env):
+//   HTTPS_PROXY=http://127.0.0.1:3128
+//   NO_PROXY=127.0.0.1,localhost
 
-import { setGlobalDispatcher, ProxyAgent } from 'undici';
+import { setGlobalDispatcher, EnvHttpProxyAgent } from 'undici';
 
 const proxyUri = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
 
 if (proxyUri) {
   try {
-    setGlobalDispatcher(new ProxyAgent(proxyUri));
+    setGlobalDispatcher(new EnvHttpProxyAgent());
   } catch (_) {
     // Silently ignore — proxy env var may be malformed or undici unavailable
   }

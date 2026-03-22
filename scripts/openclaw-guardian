@@ -22,6 +22,56 @@ exec >> "$CS_LOG_DIR/guardian.log" 2>&1
 
 log() { echo "[$(date -Iseconds)] GUARDIAN: $*"; }
 
+read_env_file_value() {
+    local env_file="$1" key="$2"
+    [ -f "$env_file" ] || return 0
+    grep -E "^${key}=" "$env_file" 2>/dev/null | head -1 | cut -d'=' -f2- || true
+}
+
+normalize_workspace_config() {
+    local json_file="$1" workspace_path="$2" owner="$3"
+    [ -f "$json_file" ] || return 0
+    python3 - "$json_file" "$workspace_path" <<'PYEOF'
+import json, sys
+from pathlib import Path
+
+json_file = Path(sys.argv[1])
+workspace_path = sys.argv[2]
+cfg = json.loads(json_file.read_text(encoding='utf-8'))
+defaults = cfg.setdefault('agents', {}).setdefault('defaults', {})
+defaults['workspace'] = workspace_path
+json_file.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding='utf-8')
+PYEOF
+    chown "${owner}:${owner}" "$json_file"
+    chmod 0600 "$json_file"
+}
+
+ensure_dropin_line() {
+    local needle="$1" insert_after="$2"
+    if ! grep -q "$needle" "$DROPIN_FILE" 2>/dev/null; then
+        python3 - "$DROPIN_FILE" "$needle" "$insert_after" <<'PYEOF'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+needle = sys.argv[2]
+insert_after = sys.argv[3]
+lines = path.read_text(encoding='utf-8').splitlines()
+result = []
+inserted = False
+for line in lines:
+    result.append(line)
+    if (not inserted) and line == insert_after:
+        result.append(needle)
+        inserted = True
+if not inserted:
+    result.append(needle)
+path.write_text("\n".join(result) + "\n", encoding='utf-8')
+PYEOF
+        log "  Added missing drop-in line: ${needle}"
+    fi
+}
+
 ###############################################################################
 # Load secrets for Telegram notification
 ###############################################################################
@@ -30,11 +80,11 @@ TELEGRAM_CHAT_ID=""
 # Prefer tmpfs (decrypted) secrets, fall back to plaintext on disk
 SECRETS_RUNTIME="/run/openclaw-codeshield/secrets.env"
 if [ -f "$SECRETS_RUNTIME" ]; then
-    # shellcheck disable=SC1090
-    source "$SECRETS_RUNTIME"
+    TELEGRAM_BOT_TOKEN="$(read_env_file_value "$SECRETS_RUNTIME" TELEGRAM_BOT_TOKEN)"
+    TELEGRAM_CHAT_ID="$(read_env_file_value "$SECRETS_RUNTIME" TELEGRAM_CHAT_ID)"
 elif [ -f "$SECRETS_FILE" ]; then
-    # shellcheck disable=SC1090
-    source "$SECRETS_FILE"
+    TELEGRAM_BOT_TOKEN="$(read_env_file_value "$SECRETS_FILE" TELEGRAM_BOT_TOKEN)"
+    TELEGRAM_CHAT_ID="$(read_env_file_value "$SECRETS_FILE" TELEGRAM_CHAT_ID)"
 fi
 
 send_telegram() {
@@ -172,6 +222,9 @@ Requires=codeshield-secrets.service
 User=openclaw-svc
 Group=openclaw-svc
 EnvironmentFile=/run/openclaw-codeshield/secrets.env
+Environment=HOME=/var/lib/openclaw-svc
+Environment=XDG_CONFIG_HOME=/var/lib/openclaw-svc/.config
+WorkingDirectory=/var/lib/openclaw-svc
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=read-only
@@ -192,6 +245,9 @@ else
     else
         log "  Drop-in exists and path is correct."
     fi
+    ensure_dropin_line 'Environment=HOME=/var/lib/openclaw-svc' 'EnvironmentFile=/run/openclaw-codeshield/secrets.env'
+    ensure_dropin_line 'Environment=XDG_CONFIG_HOME=/var/lib/openclaw-svc/.config' 'Environment=HOME=/var/lib/openclaw-svc'
+    ensure_dropin_line 'WorkingDirectory=/var/lib/openclaw-svc' 'Environment=XDG_CONFIG_HOME=/var/lib/openclaw-svc/.config'
 fi
 
 ###############################################################################
@@ -200,12 +256,21 @@ fi
 log "Step 3: Syncing openclaw data ..."
 
 mkdir -p "$OPENCLAW_SVC_HOME/.openclaw"
+mkdir -p "$OPENCLAW_SVC_HOME/.openclaw/workspace"
 if [ -d "$OPENCLAW_HOME/.openclaw" ]; then
     rsync -a --update "$OPENCLAW_HOME/.openclaw/" "$OPENCLAW_SVC_HOME/.openclaw/" 2>/dev/null || \
         cp -a "$OPENCLAW_HOME/.openclaw/"* "$OPENCLAW_SVC_HOME/.openclaw/" 2>/dev/null || true
     if [ -f "$OPENCLAW_HOME/.claude.json" ]; then
         install -m 0600 -o openclaw-svc -g openclaw-svc "$OPENCLAW_HOME/.claude.json" "$OPENCLAW_SVC_HOME/.claude.json"
     fi
+    normalize_workspace_config \
+        "$OPENCLAW_HOME/.openclaw/openclaw.json" \
+        "$OPENCLAW_HOME/.openclaw/workspace" \
+        "openclaw"
+    normalize_workspace_config \
+        "$OPENCLAW_SVC_HOME/.openclaw/openclaw.json" \
+        "$OPENCLAW_SVC_HOME/.openclaw/workspace" \
+        "openclaw-svc"
     chown -R openclaw-svc:openclaw-svc "$OPENCLAW_SVC_HOME/.openclaw"
     log "  Data synced."
 fi

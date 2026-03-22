@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CODE SHIELD V3.1.3 -- Configuration Management CLI
+# CODE SHIELD V3.1.4 -- Configuration Management CLI
 # Usage: codeshield-config <command> [args]
 #
 # Commands:
@@ -441,6 +441,15 @@ openclaw_json_paths() {
     fi
 }
 
+workspace_path_for_json() {
+    local json_file="$1"
+    if [ "$json_file" = "/var/lib/openclaw-svc/.openclaw/openclaw.json" ]; then
+        printf '%s\n' '/var/lib/openclaw-svc/.openclaw/workspace'
+    else
+        printf '%s\n' '/home/openclaw/.openclaw/workspace'
+    fi
+}
+
 cmd_qmd_backend() {
     require_root
 
@@ -495,13 +504,17 @@ PYEOF
 
             while IFS= read -r json_file; do
                 local owner="openclaw"
+                local workspace_path
                 [ "$json_file" = "/var/lib/openclaw-svc/.openclaw/openclaw.json" ] && owner="openclaw-svc"
+                workspace_path="$(workspace_path_for_json "$json_file")"
                 mkdir -p "$(dirname "$json_file")"
-                python3 - "$json_file" <<'PYEOF'
+                mkdir -p "$workspace_path"
+                python3 - "$json_file" "$workspace_path" <<'PYEOF'
 import json, sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
+workspace_path = sys.argv[2]
 cfg = {}
 if path.exists():
     try:
@@ -539,6 +552,7 @@ update = qmd.get('update') if isinstance(qmd.get('update'), dict) else {}
 update['onBoot'] = False
 update['waitForBootSync'] = False
 qmd['update'] = update
+cfg.setdefault('agents', {}).setdefault('defaults', {})['workspace'] = workspace_path
 
 with open(path, 'w', encoding='utf-8') as f:
     json.dump(cfg, f, ensure_ascii=False, indent=2)

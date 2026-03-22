@@ -1,21 +1,31 @@
 # Changelog
 
-All notable changes to CODE SHIELD are documented here.
+## [3.1.4] - 2026-03-23
 
----
+### Fixed / 修复
+
+- `openclaw-guardian` now reads systemd-style `secrets.env` safely instead of `source`-ing values such as `NODE_OPTIONS=--import ...`.
+- `lib/02-isolation.sh` and `openclaw-guardian` now normalize the service runtime workspace to `/var/lib/openclaw-svc/.openclaw/workspace`.
+- `codeshield-config qmd-backend enable` now preserves the writable service workspace path when it updates `openclaw.json`.
+- `openclaw-cost-monitor`, `openclaw-injection-scan`, and `emergency-lockdown` now read secrets without executing the env file.
+
+- `openclaw-guardian` 现在会安全读取 systemd 风格的 `secrets.env`，不再直接 `source` 像 `NODE_OPTIONS=--import ...` 这样的值。
+- `lib/02-isolation.sh` 与 `openclaw-guardian` 现在会把 service runtime 的 workspace 统一修正为 `/var/lib/openclaw-svc/.openclaw/workspace`。
+- `codeshield-config qmd-backend enable` 在更新 `openclaw.json` 时会保留可写的 service workspace 路径。
+- `openclaw-cost-monitor`、`openclaw-injection-scan` 和 `emergency-lockdown` 现在也会以安全方式读取 secrets，而不是执行 env 文件。
+
+### Docs / 文档
+
+- Rewrote `README.md` and `CHANGELOG.md` as clean UTF-8 bilingual documents.
+
+- 重写 `README.md` 与 `CHANGELOG.md`，修复中文乱码并统一为 UTF-8 双语文档。
 
 ## [3.1.3] - 2026-03-22
 
-### New: manage OpenClaw QMD backend through `codeshield-config` / ????? `codeshield-config` ?? OpenClaw QMD ??
+### Added / 新增
 
 - Added `codeshield-config qmd-backend [enable|show|disable]`.
-- The new command writes `memory.qmd` into both the interactive and service-runtime `openclaw.json` files.
-- The command points OpenClaw at `/home/openclaw/scripts/qmd-openclaw-wrapper.sh`, keeping QMD retrieval inside the Codeshield-isolated runtime model.
-- This makes QMD retrieval re-applicable after OpenClaw, Codeshield, or custom_qmd updates without re-running the installer.
+- Mirrored `.claude.json` into `/var/lib/openclaw-svc/.claude.json`.
 
-## [3.1.2] - 2026-03-22
-
-### Fix: mirror `.claude.json` into the Codeshield runtime home
-
-- QMD and other external MCP registrations were often written only to `/home/openclaw/.claude.json`, while the live `openclaw.service` process runs as `openclaw-svc` with home `/var/lib/openclaw-svc`.
-- `lib/02-isolation.sh` and `scripts/openclaw-guardian` now copy `/home/openclaw/.claude.json` into `/var/lib/openclaw-svc/.claude.json`, set `openclaw-svc` ownership, and preserve restrictive permissions.
+- 新增 `codeshield-config qmd-backend [enable|show|disable]`。
+- 将 `.claude.json` 镜像到 `/var/lib/openclaw-svc/.claude.json`。

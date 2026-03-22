@@ -11,6 +11,30 @@ OPENCLAW_JSON="$OPENCLAW_HOME/.openclaw/openclaw.json"
 DROPIN_DIR="/etc/systemd/system/openclaw.service.d"
 DROPIN_FILE="$DROPIN_DIR/codeshield.conf"
 
+read_env_file_value() {
+    local env_file="$1" key="$2"
+    [ -f "$env_file" ] || return 0
+    grep -E "^${key}=" "$env_file" 2>/dev/null | head -1 | cut -d'=' -f2- || true
+}
+
+normalize_workspace_config() {
+    local json_file="$1" workspace_path="$2" owner="$3"
+    [ -f "$json_file" ] || return 0
+    python3 - "$json_file" "$workspace_path" <<'PY'
+import json, sys
+from pathlib import Path
+
+json_file = Path(sys.argv[1])
+workspace_path = sys.argv[2]
+cfg = json.loads(json_file.read_text(encoding='utf-8'))
+defaults = cfg.setdefault('agents', {}).setdefault('defaults', {})
+defaults['workspace'] = workspace_path
+json_file.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding='utf-8')
+PY
+    chown "${owner}:${owner}" "$json_file"
+    chmod 0600 "$json_file"
+}
+
 ###############################################################################
 # 1. Ensure openclaw-svc user exists
 ###############################################################################
@@ -158,12 +182,21 @@ fi
 ###############################################################################
 if [ "$DRY_RUN" -eq 0 ]; then
     mkdir -p "$OPENCLAW_SVC_HOME/.openclaw"
+    mkdir -p "$OPENCLAW_SVC_HOME/.openclaw/workspace"
     if [ -d "$OPENCLAW_HOME/.openclaw" ]; then
         rsync -a --update "$OPENCLAW_HOME/.openclaw/" "$OPENCLAW_SVC_HOME/.openclaw/" 2>/dev/null || \
             cp -a "$OPENCLAW_HOME/.openclaw/"* "$OPENCLAW_SVC_HOME/.openclaw/" 2>/dev/null || true
         if [ -f "$OPENCLAW_HOME/.claude.json" ]; then
             install -m 0600 -o openclaw-svc -g openclaw-svc "$OPENCLAW_HOME/.claude.json" "$OPENCLAW_SVC_HOME/.claude.json"
         fi
+        normalize_workspace_config \
+            "$OPENCLAW_HOME/.openclaw/openclaw.json" \
+            "$OPENCLAW_HOME/.openclaw/workspace" \
+            "openclaw"
+        normalize_workspace_config \
+            "$OPENCLAW_SVC_HOME/.openclaw/openclaw.json" \
+            "$OPENCLAW_SVC_HOME/.openclaw/workspace" \
+            "openclaw-svc"
         chown -R openclaw-svc:openclaw-svc "$OPENCLAW_SVC_HOME/.openclaw"
         ok "Synced openclaw data to $OPENCLAW_SVC_HOME/.openclaw"
     else
@@ -192,6 +225,9 @@ User=openclaw-svc
 Group=openclaw-svc
 # Secrets are decrypted to tmpfs by codeshield-secrets.service
 EnvironmentFile=/run/openclaw-codeshield/secrets.env
+Environment=HOME=/var/lib/openclaw-svc
+Environment=XDG_CONFIG_HOME=/var/lib/openclaw-svc/.config
+WorkingDirectory=/var/lib/openclaw-svc
 
 # Security hardening
 NoNewPrivileges=yes
@@ -229,7 +265,6 @@ configure_openclaw() {
 
     info "Configuring openclaw (channels, gateway, policies) ..."
 
-    # Source secrets for this step (needed for token values)
     local _secrets_src=""
     if [ -f "/run/openclaw-codeshield/secrets.env" ]; then
         _secrets_src="/run/openclaw-codeshield/secrets.env"
@@ -242,8 +277,10 @@ configure_openclaw() {
         return
     fi
 
-    # shellcheck disable=SC1090
-    source "$_secrets_src"
+    local TELEGRAM_BOT_TOKEN=""
+    local OPENCLAW_GATEWAY_TOKEN=""
+    TELEGRAM_BOT_TOKEN="$(read_env_file_value "$_secrets_src" TELEGRAM_BOT_TOKEN)"
+    OPENCLAW_GATEWAY_TOKEN="$(read_env_file_value "$_secrets_src" OPENCLAW_GATEWAY_TOKEN)"
 
     # --- Register Telegram channel with --use-env (token stays in env, not JSON) ---
     if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
@@ -305,6 +342,15 @@ except Exception as e:
     print(f'  WARN: Could not clean openclaw.json: {e}', file=sys.stderr)
 " "$SVC_JSON" 2>/dev/null || true
     fi
+
+    normalize_workspace_config \
+        "$OPENCLAW_HOME/.openclaw/openclaw.json" \
+        "$OPENCLAW_HOME/.openclaw/workspace" \
+        "openclaw"
+    normalize_workspace_config \
+        "$OPENCLAW_SVC_HOME/.openclaw/openclaw.json" \
+        "$OPENCLAW_SVC_HOME/.openclaw/workspace" \
+        "openclaw-svc"
 }
 
 if [ "$DRY_RUN" -eq 0 ]; then

@@ -20,6 +20,12 @@ mkdir -p "$CS_LOG_DIR" "$CS_DATA_DIR"
 
 log() { echo "[$(date -Iseconds)] COST-MONITOR: $*"; }
 
+read_env_file_value() {
+    local env_file="$1" key="$2"
+    [ -f "$env_file" ] || return 0
+    grep -E "^${key}=" "$env_file" 2>/dev/null | head -1 | cut -d'=' -f2- || true
+}
+
 ###############################################################################
 # Load Telegram config
 ###############################################################################
@@ -27,8 +33,9 @@ TELEGRAM_BOT_TOKEN=""
 TELEGRAM_CHAT_ID=""
 OPENAI_API_KEY=""
 if [ -f "$SECRETS_FILE" ]; then
-    # shellcheck disable=SC1090
-    source "$SECRETS_FILE"
+    TELEGRAM_BOT_TOKEN="$(read_env_file_value "$SECRETS_FILE" TELEGRAM_BOT_TOKEN)"
+    TELEGRAM_CHAT_ID="$(read_env_file_value "$SECRETS_FILE" TELEGRAM_CHAT_ID)"
+    OPENAI_API_KEY="$(read_env_file_value "$SECRETS_FILE" OPENAI_API_KEY)"
 fi
 
 send_alert() {

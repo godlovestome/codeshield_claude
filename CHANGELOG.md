@@ -1,5 +1,15 @@
 # Changelog
 
+## [3.1.5] - 2026-03-23
+
+### Fixed / 修复
+
+- Added a CODE SHIELD SOUL runtime directive that forces a live retrieval check before OpenClaw answers whether QMD or the knowledge base is available.
+- This prevents Telegram sessions from relying only on stale conversation context after the QMD backend has already been repaired.
+
+- 新增 CODE SHIELD 的 SOUL 运行时指令：当 OpenClaw 被问到 QMD 或知识库是否可用时，必须先做一次实时检索验证，再回答。
+- 这样可以避免 Telegram 老会话在 QMD 后端已经修好后，仍然只根据过期上下文继续答“还不行”。
+
 ## [3.1.4] - 2026-03-23
 
 ### Fixed / 修复

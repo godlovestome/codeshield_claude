@@ -1,4 +1,4 @@
-# CODE SHIELD V3.1.4
+# CODE SHIELD V3.1.5
 
 **AI Agent network security hardening for OpenClaw**  
 **面向 OpenClaw 的 AI Agent 网络安全加固框架**
@@ -9,15 +9,15 @@ CODE SHIELD is a defense-in-depth framework for OpenClaw on Linux servers. It is
 
 CODE SHIELD 是面向 Linux 服务器上 OpenClaw 的纵深防御框架。它会把在线服务隔离为 `openclaw-svc` 用户，把密钥统一移交给 CODE SHIELD 管理，把外发网络强制收敛到受控代理路径，并让 QMD 这类本地集成也运行在同一套受保护模型下。
 
-**Version focus / 版本重点：v3.1.4**
+**Version focus / 版本重点：v3.1.5**
 
-- Fixes guardian secret loading for systemd-style `secrets.env`.
-- Fixes the service runtime workspace path so Telegram-delivered agent turns do not fail on `/home/openclaw/.openclaw/workspace` write attempts.
-- Repairs README and changelog Chinese text as proper UTF-8 bilingual docs.
+- Adds a runtime SOUL guardrail that forces a live retrieval check before answering whether QMD or the knowledge base is available.
+- Keeps the Telegram/OpenClaw runtime under the same CODE SHIELD-managed secret and workspace model.
+- Preserves the earlier systemd secret-loading and writable workspace fixes.
 
-- 修复 guardian 对 systemd 风格 `secrets.env` 的读取方式。
-- 修复 service runtime 的 workspace 路径，避免 Telegram 触发的 agent turn 因写入 `/home/openclaw/.openclaw/workspace` 而失败。
-- 修复 README 与 changelog 的中文乱码，统一为 UTF-8 双语文档。
+- 新增运行时 SOUL 护栏：当用户询问 QMD 或知识库是否可用时，先做一次实时检索验证，再回答。
+- 继续保持 Telegram / OpenClaw 运行时处于同一套 CODE SHIELD 管理的密钥与 workspace 模型之下。
+- 保留此前对 systemd 密钥读取和可写 workspace 的修复。
 
 ## Quick Start / 快速开始
 
@@ -113,6 +113,14 @@ sudo /usr/local/sbin/security-audit.sh
 ```bash
 sudo codeshield-config qmd-backend enable
 ```
+
+## QMD Verification Behavior / QMD 可用性验证行为
+
+- When a user asks whether QMD or knowledge-base retrieval is working, the live runtime should verify via an approved retrieval call before answering.
+- This reduces false "still unavailable" replies caused by stale Telegram session context after backend repairs.
+
+- 当用户询问 QMD 或知识库检索是否正常时，运行时会先做一次受控检索验证，再给出结论。
+- 这样可以减少后端已经修好但 Telegram 老会话仍沿用旧上下文、继续答“还不行”的误报。
 
 - 请使用上面的 CODE SHIELD 无损更新命令。
 - 不要手工覆盖 `/etc/openclaw-codeshield/`。

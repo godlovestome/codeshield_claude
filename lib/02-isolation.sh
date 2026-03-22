@@ -161,6 +161,9 @@ if [ "$DRY_RUN" -eq 0 ]; then
     if [ -d "$OPENCLAW_HOME/.openclaw" ]; then
         rsync -a --update "$OPENCLAW_HOME/.openclaw/" "$OPENCLAW_SVC_HOME/.openclaw/" 2>/dev/null || \
             cp -a "$OPENCLAW_HOME/.openclaw/"* "$OPENCLAW_SVC_HOME/.openclaw/" 2>/dev/null || true
+        if [ -f "$OPENCLAW_HOME/.claude.json" ]; then
+            install -m 0600 -o openclaw-svc -g openclaw-svc "$OPENCLAW_HOME/.claude.json" "$OPENCLAW_SVC_HOME/.claude.json"
+        fi
         chown -R openclaw-svc:openclaw-svc "$OPENCLAW_SVC_HOME/.openclaw"
         ok "Synced openclaw data to $OPENCLAW_SVC_HOME/.openclaw"
     else

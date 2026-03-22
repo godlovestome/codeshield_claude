@@ -203,6 +203,9 @@ mkdir -p "$OPENCLAW_SVC_HOME/.openclaw"
 if [ -d "$OPENCLAW_HOME/.openclaw" ]; then
     rsync -a --update "$OPENCLAW_HOME/.openclaw/" "$OPENCLAW_SVC_HOME/.openclaw/" 2>/dev/null || \
         cp -a "$OPENCLAW_HOME/.openclaw/"* "$OPENCLAW_SVC_HOME/.openclaw/" 2>/dev/null || true
+    if [ -f "$OPENCLAW_HOME/.claude.json" ]; then
+        install -m 0600 -o openclaw-svc -g openclaw-svc "$OPENCLAW_HOME/.claude.json" "$OPENCLAW_SVC_HOME/.claude.json"
+    fi
     chown -R openclaw-svc:openclaw-svc "$OPENCLAW_SVC_HOME/.openclaw"
     log "  Data synced."
 fi

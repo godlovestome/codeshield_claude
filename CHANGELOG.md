@@ -4,6 +4,16 @@ All notable changes to CODE SHIELD are documented here.
 
 ---
 
+## [3.1.2] - 2026-03-22
+
+### Fix: mirror `.claude.json` into the Codeshield runtime home / ???? `.claude.json` ??? Codeshield ??????
+
+- Problem / ??: QMD and other external MCP registrations were often written only to `/home/openclaw/.claude.json`, but the live `openclaw.service` process runs as `openclaw-svc` with home `/var/lib/openclaw-svc`. Result: the Telegram-bound OpenClaw runtime could miss MCP registrations that were visible only to the interactive `openclaw` user.
+- Fix / ??: both `lib/02-isolation.sh` and `scripts/openclaw-guardian` now copy `/home/openclaw/.claude.json` into `/var/lib/openclaw-svc/.claude.json`, set `openclaw-svc` ownership, and preserve restrictive permissions. This keeps Codeshield's isolated runtime aligned with user-managed MCP registrations without falling back to unsafe secret handling.
+- Files changed / ????: `lib/02-isolation.sh`, `scripts/openclaw-guardian`, `install.sh`, `README.md`
+
+---
+
 ## [3.1.1] — 2026-03-21
 
 ### Security Fix: DOCKER-USER chain incomplete — Qdrant gRPC port 6334 exposed + rules lost on Docker restart / 安全修复：DOCKER-USER 链不完整——Qdrant gRPC 端口 6334 暴露 + Docker 重启后规则丢失

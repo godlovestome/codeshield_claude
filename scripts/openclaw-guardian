@@ -414,3 +414,5 @@ else
 fi
 
 log "========== Guardian complete =========="
+
+exit 0

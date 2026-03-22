@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.1.7] - 2026-03-23
+
+### Fixed / 修复
+
+- `openclaw-guardian` now exits explicitly with success after completing the SOUL refresh path, preventing false systemd failures from trailing control-character noise after hot syncs.
+
+- `openclaw-guardian` 在完成 SOUL 刷新路径后会显式成功退出，避免热同步后因尾部控制字符噪声而出现假的 systemd 失败。
+
 ## [3.1.6] - 2026-03-23
 
 ### Fixed / 修复

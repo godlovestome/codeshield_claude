@@ -8,6 +8,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 ISOLATION = REPO_ROOT / 'lib' / '02-isolation.sh'
 GUARDIAN = REPO_ROOT / 'scripts' / 'openclaw-guardian'
 INSTALL = REPO_ROOT / 'install.sh'
+CONFIG_CLI = REPO_ROOT / 'scripts' / 'codeshield-config'
 
 
 def read_text(path: Path) -> str:
@@ -23,7 +24,14 @@ class RuntimeSyncTests(unittest.TestCase):
             self.assertIn('install -m 0600 -o openclaw-svc -g openclaw-svc', text)
 
     def test_install_version_bumped(self) -> None:
-        self.assertIn('readonly CS_VERSION="3.1.2"', read_text(INSTALL))
+        self.assertIn('readonly CS_VERSION="3.1.3"', read_text(INSTALL))
+
+    def test_codeshield_config_can_manage_qmd_backend(self) -> None:
+        text = read_text(CONFIG_CLI)
+        self.assertIn('cmd_qmd_backend()', text)
+        self.assertIn('qmd-backend [enable|show|disable]', text)
+        self.assertIn('/home/openclaw/scripts/qmd-openclaw-wrapper.sh', text)
+        self.assertIn("memory['backend'] = 'qmd'", text)
 
 
 if __name__ == '__main__':

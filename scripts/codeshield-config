@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CODE SHIELD V3.1.1 -- Configuration Management CLI
+# CODE SHIELD V3.1.3 -- Configuration Management CLI
 # Usage: codeshield-config <command> [args]
 #
 # Commands:
@@ -13,6 +13,7 @@
 #   list-models              List configured LLM providers
 #   proxy-allow <domain>     Add a domain to the Squid proxy whitelist
 #   network-mode [open|strict] Show or toggle network access mode
+#   qmd-backend [enable|show|disable] Manage the OpenClaw QMD backend under Codeshield
 #   help                     Show this help message
 set -euo pipefail
 export LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 2>/dev/null || export LC_ALL=C.UTF-8 LANG=C.UTF-8 2>/dev/null || true
@@ -428,6 +429,169 @@ if added:
 else:
     print(f"  All models already in openclaw.json whitelist", flush=True)
 PYEOF
+}
+
+###############################################################################
+# QMD backend management for OpenClaw built-in retrieval
+###############################################################################
+openclaw_json_paths() {
+    printf '%s\n' '/home/openclaw/.openclaw/openclaw.json'
+    if id openclaw-svc >/dev/null 2>&1; then
+        printf '%s\n' '/var/lib/openclaw-svc/.openclaw/openclaw.json'
+    fi
+}
+
+cmd_qmd_backend() {
+    require_root
+
+    local action="${1:-show}"
+    shift || true
+    local do_restart=true
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --no-restart) do_restart=false ;;
+            *)
+                fail "Unknown qmd-backend option: $1"
+                exit 1
+                ;;
+        esac
+        shift
+    done
+
+    case "$action" in
+        show)
+            python3 - <<'PYEOF'
+import json
+from pathlib import Path
+
+for raw_path in [Path('/home/openclaw/.openclaw/openclaw.json'), Path('/var/lib/openclaw-svc/.openclaw/openclaw.json')]:
+    print(f'[{raw_path}]')
+    if not raw_path.exists():
+        print('  status: missing')
+        continue
+    try:
+        cfg = json.loads(raw_path.read_text(encoding='utf-8'))
+    except Exception as exc:
+        print(f'  status: invalid-json ({exc})')
+        continue
+    memory = cfg.get('memory') or {}
+    qmd = memory.get('qmd') or {}
+    print(f"  backend: {memory.get('backend', 'builtin')}")
+    print(f"  command: {qmd.get('command', '(unset)')}")
+    print(f"  searchMode: {qmd.get('searchMode', '(default)')}")
+    print(f"  includeDefaultMemory: {qmd.get('includeDefaultMemory', '(default)')}")
+    paths = qmd.get('paths') or []
+    print(f"  paths: {len(paths)}")
+    for item in paths[:10]:
+        print(f"    - {item.get('name', '(unnamed)')}: {item.get('path', '(missing)')}")
+PYEOF
+            ;;
+        enable)
+            if [ ! -x /home/openclaw/scripts/qmd-openclaw-wrapper.sh ]; then
+                warn "QMD wrapper not found at /home/openclaw/scripts/qmd-openclaw-wrapper.sh"
+                warn "Install or update the custom_qmd deployment before enabling the backend."
+            fi
+
+            while IFS= read -r json_file; do
+                local owner="openclaw"
+                [ "$json_file" = "/var/lib/openclaw-svc/.openclaw/openclaw.json" ] && owner="openclaw-svc"
+                mkdir -p "$(dirname "$json_file")"
+                python3 - "$json_file" <<'PYEOF'
+import json, sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+cfg = {}
+if path.exists():
+    try:
+        cfg = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError):
+        cfg = {}
+
+qmd_root = Path('/home/openclaw/qmd-index')
+paths = []
+if qmd_root.is_dir():
+    for child in sorted(qmd_root.iterdir()):
+        if child.is_dir():
+            paths.append({
+                'name': child.name,
+                'path': str(child),
+                'pattern': '**/*.md',
+            })
+    if not paths:
+        paths.append({
+            'name': 'qmd-index',
+            'path': str(qmd_root),
+            'pattern': '**/*.md',
+        })
+
+memory = cfg.setdefault('memory', {})
+memory['backend'] = 'qmd'
+memory['citations'] = memory.get('citations') or 'auto'
+qmd = memory.setdefault('qmd', {})
+qmd['command'] = '/home/openclaw/scripts/qmd-openclaw-wrapper.sh'
+qmd['searchMode'] = qmd.get('searchMode') or 'query'
+qmd['includeDefaultMemory'] = False
+qmd['paths'] = paths
+qmd['mcporter'] = {'enabled': False}
+update = qmd.get('update') if isinstance(qmd.get('update'), dict) else {}
+update['onBoot'] = False
+update['waitForBootSync'] = False
+qmd['update'] = update
+
+with open(path, 'w', encoding='utf-8') as f:
+    json.dump(cfg, f, ensure_ascii=False, indent=2)
+    f.write('\n')
+PYEOF
+                chown "${owner}:${owner}" "$json_file"
+                chmod 0600 "$json_file"
+                ok "Configured OpenClaw QMD backend in $json_file"
+            done < <(openclaw_json_paths)
+
+            if [ "$do_restart" = true ]; then
+                restart_openclaw
+            else
+                info 'Skipped openclaw restart (--no-restart).'
+            fi
+            ;;
+        disable)
+            while IFS= read -r json_file; do
+                [ -f "$json_file" ] || continue
+                local owner="openclaw"
+                [ "$json_file" = "/var/lib/openclaw-svc/.openclaw/openclaw.json" ] && owner="openclaw-svc"
+                python3 - "$json_file" <<'PYEOF'
+import json, sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    cfg = json.loads(path.read_text(encoding='utf-8'))
+except (OSError, json.JSONDecodeError):
+    cfg = {}
+mem = cfg.setdefault('memory', {})
+mem['backend'] = 'builtin'
+mem.pop('qmd', None)
+with open(path, 'w', encoding='utf-8') as f:
+    json.dump(cfg, f, ensure_ascii=False, indent=2)
+    f.write('\n')
+PYEOF
+                chown "${owner}:${owner}" "$json_file"
+                chmod 0600 "$json_file"
+                ok "Disabled OpenClaw QMD backend in $json_file"
+            done < <(openclaw_json_paths)
+
+            if [ "$do_restart" = true ]; then
+                restart_openclaw
+            else
+                info 'Skipped openclaw restart (--no-restart).'
+            fi
+            ;;
+        *)
+            fail "Usage: codeshield-config qmd-backend [enable|show|disable] [--no-restart]"
+            exit 1
+            ;;
+    esac
 }
 
 ###############################################################################
@@ -1039,6 +1203,8 @@ Commands:
   network-mode [open|strict] Show or toggle network access mode:
                              open   = all domains through proxy (default)
                              strict = known API domains only (disables web_fetch)
+  qmd-backend [enable|show|disable]
+                             Manage OpenClaw's built-in QMD backend under Codeshield
   help                       Show this help message
 
 Examples:
@@ -1052,6 +1218,8 @@ Examples:
   codeshield-config patch-provider deepseek
   codeshield-config network-mode              # show current mode
   codeshield-config network-mode open         # allow all domains
+  codeshield-config qmd-backend show          # inspect current QMD backend config
+  codeshield-config qmd-backend enable        # enable OpenClaw -> QMD retrieval
 HELPEOF
 }
 
@@ -1073,6 +1241,7 @@ main() {
         list-models)    cmd_list_models ;;
         proxy-allow)    cmd_proxy_allow "${1:-}" ;;
         network-mode)   cmd_network_mode "${1:-}" ;;
+        qmd-backend)    cmd_qmd_backend "$@" ;;
         help|--help|-h) cmd_help ;;
         *)
             fail "Unknown command: $cmd"

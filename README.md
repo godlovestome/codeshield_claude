@@ -1,4 +1,4 @@
-# CODE SHIELD V3.1.5
+# CODE SHIELD V3.1.6
 
 **AI Agent network security hardening for OpenClaw**  
 **面向 OpenClaw 的 AI Agent 网络安全加固框架**
@@ -9,15 +9,15 @@ CODE SHIELD is a defense-in-depth framework for OpenClaw on Linux servers. It is
 
 CODE SHIELD 是面向 Linux 服务器上 OpenClaw 的纵深防御框架。它会把在线服务隔离为 `openclaw-svc` 用户，把密钥统一移交给 CODE SHIELD 管理，把外发网络强制收敛到受控代理路径，并让 QMD 这类本地集成也运行在同一套受保护模型下。
 
-**Version focus / 版本重点：v3.1.5**
+**Version focus / 版本重点：v3.1.6**
 
-- Adds a runtime SOUL guardrail that forces a live retrieval check before answering whether QMD or the knowledge base is available.
+- Adds a live-retrieval verification guardrail for QMD availability questions.
+- Refreshes the managed SOUL injection block on existing runtimes, so old deployments pick up new guardrails without reinstalling.
 - Keeps the Telegram/OpenClaw runtime under the same CODE SHIELD-managed secret and workspace model.
-- Preserves the earlier systemd secret-loading and writable workspace fixes.
 
-- 新增运行时 SOUL 护栏：当用户询问 QMD 或知识库是否可用时，先做一次实时检索验证，再回答。
+- 新增 QMD 可用性实时验证护栏。
+- 让已有部署上的受管 SOUL 注入块也能被刷新，避免模板更新后运行时仍停留在旧规则。
 - 继续保持 Telegram / OpenClaw 运行时处于同一套 CODE SHIELD 管理的密钥与 workspace 模型之下。
-- 保留此前对 systemd 密钥读取和可写 workspace 的修复。
 
 ## Quick Start / 快速开始
 

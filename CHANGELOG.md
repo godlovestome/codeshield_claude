@@ -1,5 +1,15 @@
 # Changelog
 
+## [3.1.6] - 2026-03-23
+
+### Fixed / 修复
+
+- `openclaw-guardian` and the install-time injection step now refresh the managed SOUL protection block on existing deployments instead of only appending it once.
+- Existing runtimes can now pick up the new live QMD verification guardrail without reinstalling or manually editing `SOUL.md`.
+
+- `openclaw-guardian` 与安装阶段的注入逻辑现在会刷新已有部署中的受管 SOUL 保护块，而不只是首次追加一次。
+- 这样旧部署也能直接拿到新的 QMD 实时验证护栏，无需重装，也不用手工改 `SOUL.md`。
+
 ## [3.1.5] - 2026-03-23
 
 ### Fixed / 修复

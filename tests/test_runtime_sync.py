@@ -25,7 +25,7 @@ class RuntimeSyncTests(unittest.TestCase):
             self.assertIn('install -m 0600 -o openclaw-svc -g openclaw-svc', text)
 
     def test_install_version_bumped(self) -> None:
-        self.assertIn('readonly CS_VERSION="3.1.5"', read_text(INSTALL))
+        self.assertIn('readonly CS_VERSION="3.1.6"', read_text(INSTALL))
 
     def test_codeshield_config_can_manage_qmd_backend(self) -> None:
         text = read_text(CONFIG_CLI)
@@ -65,9 +65,17 @@ class RuntimeSyncTests(unittest.TestCase):
 
     def test_soul_template_requires_live_qmd_verification(self) -> None:
         text = read_text(SOUL_TEMPLATE)
+        self.assertIn('CODESHIELD-SOUL-BEGIN', text)
+        self.assertIn('CODESHIELD-SOUL-END', text)
         self.assertIn('Live Retrieval Verification', text)
         self.assertIn('QMD, memory search, or the knowledge base', text)
         self.assertIn('do not answer from stale conversation context alone', text)
+
+    def test_guardian_can_refresh_existing_soul_protection_block(self) -> None:
+        text = read_text(GUARDIAN)
+        self.assertIn('sync_soul_file()', text)
+        self.assertIn('legacy_heading = \'## Prompt Injection Resistance (CODE SHIELD V3)\'', text)
+        self.assertIn('SOUL.md protection refreshed', text)
 
 
 if __name__ == '__main__':

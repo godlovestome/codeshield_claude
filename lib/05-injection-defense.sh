@@ -9,6 +9,40 @@ OPENCLAW_SVC_HOME="/var/lib/openclaw-svc"
 OPENCLAW_DIR="$OPENCLAW_HOME/.openclaw"
 SVC_OPENCLAW_DIR="$OPENCLAW_SVC_HOME/.openclaw"
 
+sync_soul_file() {
+    local soul_file="$1" template_file="$2" canary="$3"
+    python3 - "$soul_file" "$template_file" "$canary" <<'PY'
+from pathlib import Path
+import sys
+
+soul_path = Path(sys.argv[1])
+template_path = Path(sys.argv[2])
+canary = sys.argv[3]
+
+managed = template_path.read_text(encoding='utf-8').replace('{{CANARY}}', canary).strip() + '\n'
+text = soul_path.read_text(encoding='utf-8') if soul_path.exists() else ''
+
+begin = '<!-- CODESHIELD-SOUL-BEGIN -->'
+end = '<!-- CODESHIELD-SOUL-END -->'
+legacy_heading = '## Prompt Injection Resistance (CODE SHIELD V3)'
+
+if begin in text and end in text:
+    start = text.index(begin)
+    finish = text.index(end, start) + len(end)
+    text = text[:start].rstrip()
+elif legacy_heading in text:
+    text = text[:text.index(legacy_heading)].rstrip()
+else:
+    text = text.rstrip()
+
+if text:
+    text += '\n\n'
+text += managed
+soul_path.parent.mkdir(parents=True, exist_ok=True)
+soul_path.write_text(text, encoding='utf-8')
+PY
+}
+
 ###############################################################################
 # 1. Skills Freeze Policy
 ###############################################################################
@@ -52,22 +86,8 @@ deploy_soul_protection() {
     for soul_dir in "$OPENCLAW_DIR" "$SVC_OPENCLAW_DIR"; do
         local soul_file="$soul_dir/SOUL.md"
         mkdir -p "$soul_dir"
-
-        if [ -f "$soul_file" ]; then
-            # Check if injection defense is already present
-            if grep -q 'CODESHIELD-CANARY' "$soul_file"; then
-                ok "SOUL.md at $soul_file already has canary token."
-            else
-                # Append injection defense section
-                printf "\n\n" >> "$soul_file"
-                sed "s/{{CANARY}}/$CANARY/g" "$SOUL_INJECTION" >> "$soul_file"
-                ok "Appended injection defense to $soul_file"
-            fi
-        else
-            # Create minimal SOUL.md with injection defense
-            sed "s/{{CANARY}}/$CANARY/g" "$SOUL_INJECTION" > "$soul_file"
-            ok "Created SOUL.md with injection defense at $soul_file"
-        fi
+        sync_soul_file "$soul_file" "$SOUL_INJECTION" "$CANARY"
+        ok "Synced injection defense into $soul_file"
     done
 }
 

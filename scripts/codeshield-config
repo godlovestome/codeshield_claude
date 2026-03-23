@@ -436,39 +436,113 @@ update_openclaw_model_whitelist() {
         return 0
     fi
 
-    local json_file=""
-    for candidate in \
-        "/var/lib/openclaw-svc/.openclaw/openclaw.json" \
-        "/home/openclaw/.openclaw/openclaw.json"; do
-        if [ -f "$candidate" ]; then
-            json_file="$candidate"
-            break
-        fi
-    done
-    if [ -z "$json_file" ]; then
+    local json_files=()
+    local candidate=""
+    while IFS= read -r candidate; do
+        [ -f "$candidate" ] && json_files+=("$candidate")
+    done < <(openclaw_json_paths)
+    if [ "${#json_files[@]}" -eq 0 ]; then
         warn "openclaw.json not found. Skipping model whitelist update for '$provider'."
         return 0
     fi
 
     info "Updating openclaw.json model whitelist for '$provider' ..."
     # shellcheck disable=SC2086
-    python3 - "$json_file" $model_refs << 'PYEOF'
+    python3 - "${json_files[@]}" -- $model_refs << 'PYEOF'
 import sys, json
-json_file   = sys.argv[1]
-model_refs  = sys.argv[2:]
-with open(json_file, encoding='utf-8') as f:
-    cfg = json.load(f)
-cfg.setdefault('agents', {}).setdefault('defaults', {}).setdefault('models', {})
-models = cfg['agents']['defaults']['models']
-added = [r for r in model_refs if r not in models]
-for r in added:
-    models[r] = {}
-if added:
-    with open(json_file, 'w', encoding='utf-8') as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
-    print(f"  Added to openclaw.json: {', '.join(added)}", flush=True)
-else:
-    print(f"  All models already in openclaw.json whitelist", flush=True)
+args = sys.argv[1:]
+split = args.index('--')
+json_files = args[:split]
+model_refs = args[split + 1:]
+
+for json_file in json_files:
+    with open(json_file, encoding='utf-8') as f:
+        cfg = json.load(f)
+    cfg.setdefault('agents', {}).setdefault('defaults', {}).setdefault('models', {})
+    models = cfg['agents']['defaults']['models']
+    added = [r for r in model_refs if r not in models]
+    for r in added:
+        models[r] = {}
+    if added:
+        with open(json_file, 'w', encoding='utf-8') as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        print(f"  [{json_file}] added: {', '.join(added)}", flush=True)
+    else:
+        print(f"  [{json_file}] model whitelist already up to date", flush=True)
+PYEOF
+}
+
+###############################################################################
+# Write non-native provider definitions into openclaw.json (auth.providers)
+###############################################################################
+update_openclaw_auth_provider_config() {
+    local provider="$1"
+    local patch_data="${OPENCLAW_JS_PATCH_PROVIDERS[$provider]:-}"
+    if [ -z "$patch_data" ]; then
+        return 0
+    fi
+
+    local json_files=()
+    local candidate=""
+    while IFS= read -r candidate; do
+        [ -f "$candidate" ] && json_files+=("$candidate")
+    done < <(openclaw_json_paths)
+    if [ "${#json_files[@]}" -eq 0 ]; then
+        warn "openclaw.json not found. Skipping auth.providers update for '$provider'."
+        return 0
+    fi
+
+    local env_var=""
+    local base_url=""
+    local api_type=""
+    local model_ids=""
+    local model_names=""
+    local reasoning_flags=""
+    IFS='|' read -r env_var base_url api_type model_ids model_names reasoning_flags <<< "$patch_data"
+
+    info "Writing auth.providers config for '$provider' ..."
+    python3 - "$provider" "$env_var" "$base_url" "$api_type" \
+        "$model_ids" "$model_names" "$reasoning_flags" "${json_files[@]}" << 'PYEOF'
+import json
+import sys
+
+provider = sys.argv[1]
+env_var = sys.argv[2]
+base_url = sys.argv[3]
+api_type = sys.argv[4]
+model_ids = sys.argv[5].split(',')
+model_names = sys.argv[6].split(',')
+reasoning = [r.strip() == 'true' for r in sys.argv[7].split(',')]
+json_files = sys.argv[8:]
+
+models = []
+for mid, mname, reas in zip(model_ids, model_names, reasoning):
+    models.append({
+        'id': mid,
+        'name': mname,
+        'reasoning': reas,
+        'input': ['text'],
+    })
+
+desired = {
+    'baseUrl': base_url,
+    'api': api_type,
+    'apiKey': env_var,
+    'models': models,
+}
+
+for json_file in json_files:
+    with open(json_file, encoding='utf-8') as f:
+        cfg = json.load(f)
+    providers = cfg.setdefault('auth', {}).setdefault('providers', {})
+    current = providers.get(provider)
+    if current != desired:
+        providers[provider] = desired
+        with open(json_file, 'w', encoding='utf-8') as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        print(f"  [{json_file}] auth.providers.{provider} updated", flush=True)
+    else:
+        print(f"  [{json_file}] auth.providers.{provider} already up to date", flush=True)
 PYEOF
 }
 
@@ -1122,6 +1196,9 @@ MEOF
     # Patch openclaw JS files for non-native providers (e.g. deepseek, glm5)
     patch_openclaw_provider "$safename"
 
+    # Write runtime auth.providers config for non-native providers on newer openclaw
+    update_openclaw_auth_provider_config "$safename"
+
     # Whitelist provider models in openclaw.json
     update_openclaw_model_whitelist "$safename"
 
@@ -1154,6 +1231,7 @@ cmd_patch_provider() {
         exit 0
     fi
     patch_openclaw_provider "$provider"
+    update_openclaw_auth_provider_config "$provider"
     update_openclaw_model_whitelist "$provider"
     ok "patch-provider '$provider' complete."
 }

@@ -1,4 +1,4 @@
-# CODE SHIELD V3.1.9
+# CODE SHIELD V3.1.10
 
 **AI agent network security hardening for OpenClaw**  
 **面向 OpenClaw 的 AI Agent 网络安全加固框架**
@@ -11,25 +11,23 @@ CODE SHIELD 用于让 OpenClaw 在受控的 Linux 服务运行时中工作。它
 
 ## Version Focus / 版本重点
 
+### v3.1.10
+
+- Non-native providers such as DeepSeek and GLM-5 are now written into `openclaw.json -> auth.providers` during CODE SHIELD setup.
+- This fixes the new OpenClaw runtime path where model whitelist entries alone are not enough for provider discovery.
+- DeepSeek can now be managed under CODE SHIELD without moving API keys back into unprotected OpenClaw config files.
+
+- 现在在 CODE SHIELD 配置 DeepSeek、GLM-5 这类非原生 provider 时，会同步写入 `openclaw.json -> auth.providers`。
+- 这修复了新版 OpenClaw 运行时中“只有模型白名单还不够，provider 仍然发现不到”的问题。
+- DeepSeek 现在可以继续在 CODE SHIELD 框架下接管，不需要把 API Key 写回不受保护的 OpenClaw 配置文件。
+
 ### v3.1.9
 
 - Non-destructive updates now correctly deploy the proxy preload asset before hardening runs.
-- `install.sh --update` no longer crashes on the undefined `CS_DIR` reference.
 - Existing servers can now upgrade cleanly to the OpenClaw-native OpenAI OAuth flow.
 
 - 无损更新现在会先正确下发代理 preload 资源，再执行 hardening。
-- `install.sh --update` 不会再因为未定义的 `CS_DIR` 变量中途崩溃。
 - 现有服务器现在可以正常升级到 OpenClaw 原生 OpenAI OAuth 流程。
-
-### v3.1.8
-
-- `codeshield-config add-model openai-oauth` now uses OpenClaw's native OAuth onboarding flow instead of asking for `OPENAI_CLIENT_ID` and `OPENAI_CLIENT_SECRET`.
-- OpenAI OAuth tokens stay in the OpenClaw runtime auth store instead of being written into CODE SHIELD secrets.
-- Runtime sync now preserves service-side OAuth state and no longer overwrites `openclaw-svc` auth files during guardian refreshes.
-
-- `codeshield-config add-model openai-oauth` 现在改为调用 OpenClaw 原生 OAuth 引导流程，不再要求手动填写 `OPENAI_CLIENT_ID` 和 `OPENAI_CLIENT_SECRET`。
-- OpenAI OAuth token 会保留在 OpenClaw 自己的运行时认证存储中，不会写入 CODE SHIELD secrets。
-- runtime 同步现在会保护 service 侧 OAuth 状态，guardian 刷新时不再覆盖 `openclaw-svc` 的认证文件。
 
 ## Quick Start / 快速开始
 
@@ -78,12 +76,39 @@ This step registers the provider, updates the whitelist, and prints the native O
 Then complete OAuth in the server terminal:
 
 ```bash
-sudo -u openclaw-svc env HOME=/var/lib/openclaw-svc XDG_CONFIG_HOME=/var/lib/openclaw-svc/.config /home/openclaw/.npm-global/bin/openclaw onboard --auth-choice openai-codex
+sudo systemd-run --pty \
+  --uid=openclaw-svc \
+  --gid=openclaw-svc \
+  -p EnvironmentFile=/run/openclaw-codeshield/secrets.env \
+  -p Environment=HOME=/var/lib/openclaw-svc \
+  -p Environment=XDG_CONFIG_HOME=/var/lib/openclaw-svc/.config \
+  -p WorkingDirectory=/var/lib/openclaw-svc \
+  /home/openclaw/.npm-global/bin/openclaw onboard --auth-choice openai-codex
 ```
 
 If OpenClaw prints an authorization link, open it in your browser, finish login, and paste the callback/result URL back into the terminal when prompted.
 
 如果 OpenClaw 输出授权链接，请在浏览器中完成登录，并在终端提示时把回调结果链接粘贴回去。
+
+## DeepSeek Under CODE SHIELD / 在 CODE SHIELD 下使用 DeepSeek
+
+```bash
+sudo codeshield-config add-model deepseek
+```
+
+This now does four things together:
+
+- stores `DEEPSEEK_API_KEY` in CODE SHIELD secrets
+- updates the proxy whitelist for `api.deepseek.com`
+- writes DeepSeek model refs into `agents.defaults.models`
+- writes `auth.providers.deepseek` into the protected OpenClaw runtime config
+
+现在这条命令会同时完成四件事：
+
+- 把 `DEEPSEEK_API_KEY` 存入 CODE SHIELD secrets
+- 更新 `api.deepseek.com` 的代理白名单
+- 把 DeepSeek 模型引用写入 `agents.defaults.models`
+- 把 `auth.providers.deepseek` 写入受保护的 OpenClaw runtime 配置
 
 ## Common Operations / 常用操作
 
@@ -93,6 +118,7 @@ sudo codeshield-config edit
 sudo codeshield-config add-model openai
 sudo codeshield-config add-model openai-oauth
 sudo codeshield-config add-model deepseek
+sudo codeshield-config patch-provider deepseek
 sudo codeshield-config qmd-backend show
 sudo codeshield-config qmd-backend enable
 sudo systemctl status openclaw

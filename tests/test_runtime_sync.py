@@ -26,7 +26,7 @@ class RuntimeSyncTests(unittest.TestCase):
             self.assertIn('install -m 0600 -o openclaw-svc -g openclaw-svc', text)
 
     def test_install_version_bumped(self) -> None:
-        self.assertIn('readonly CS_VERSION="3.1.11"', read_text(INSTALL))
+        self.assertIn('readonly CS_VERSION="3.1.12"', read_text(INSTALL))
 
     def test_codeshield_config_can_manage_qmd_backend(self) -> None:
         text = read_text(CONFIG_CLI)
@@ -34,6 +34,8 @@ class RuntimeSyncTests(unittest.TestCase):
         self.assertIn('qmd-backend [enable|show|disable]', text)
         self.assertIn('/home/openclaw/scripts/qmd-openclaw-wrapper.sh', text)
         self.assertIn("memory['backend'] = 'qmd'", text)
+        self.assertIn("qmd['limits'] = {'maxResults': 6, 'timeoutMs': 15000}", text)
+        self.assertIn("print(f\"  timeoutMs: {limits.get('timeoutMs', '(default)')}\")", text)
 
     def test_codeshield_config_writes_non_native_provider_models_config(self) -> None:
         text = read_text(CONFIG_CLI)

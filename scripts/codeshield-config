@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CODE SHIELD V3.1.11 -- Configuration Management CLI
+# CODE SHIELD V3.1.12 -- Configuration Management CLI
 # Usage: codeshield-config <command> [args]
 #
 # Commands:
@@ -623,6 +623,9 @@ for raw_path in [Path('/home/openclaw/.openclaw/openclaw.json'), Path('/var/lib/
     print(f"  command: {qmd.get('command', '(unset)')}")
     print(f"  searchMode: {qmd.get('searchMode', '(default)')}")
     print(f"  includeDefaultMemory: {qmd.get('includeDefaultMemory', '(default)')}")
+    limits = qmd.get('limits') or {}
+    print(f"  timeoutMs: {limits.get('timeoutMs', '(default)')}")
+    print(f"  maxResults: {limits.get('maxResults', '(default)')}")
     paths = qmd.get('paths') or []
     print(f"  paths: {len(paths)}")
     for item in paths[:10]:
@@ -679,6 +682,7 @@ qmd = memory.setdefault('qmd', {})
 qmd['command'] = '/home/openclaw/scripts/qmd-openclaw-wrapper.sh'
 qmd['searchMode'] = qmd.get('searchMode') or 'query'
 qmd['includeDefaultMemory'] = False
+qmd['limits'] = {'maxResults': 6, 'timeoutMs': 15000}
 qmd['paths'] = paths
 qmd['mcporter'] = {'enabled': False}
 update = qmd.get('update') if isinstance(qmd.get('update'), dict) else {}

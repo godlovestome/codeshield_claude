@@ -23,7 +23,7 @@ export DEBIAN_FRONTEND=noninteractive
 ###############################################################################
 # Constants
 ###############################################################################
-readonly CS_VERSION="3.1.11"
+readonly CS_VERSION="3.1.12"
 readonly CS_CONF_DIR="/etc/openclaw-codeshield"
 readonly CS_LIB_DIR="/usr/local/lib/openclaw-codeshield"
 readonly CS_SBIN_DIR="/usr/local/sbin"

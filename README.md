@@ -1,4 +1,4 @@
-# CODE SHIELD V3.1.11
+# CODE SHIELD V3.1.12
 
 **AI agent network security hardening for OpenClaw**  
 **面向 OpenClaw 的 AI Agent 网络安全加固框架**
@@ -11,19 +11,23 @@ CODE SHIELD 用于让 OpenClaw 在受控的 Linux 服务运行时中工作。它
 
 ## Version Focus / 版本重点
 
-### v3.1.11
+### v3.1.12
 
-- Non-native providers such as DeepSeek and GLM-5 are now written into `openclaw.json -> models.providers` instead of the invalid `auth.providers` path.
-- Existing servers can now converge back to a valid OpenClaw config without moving API keys out of CODE SHIELD.
+- `codeshield-config qmd-backend enable` now writes explicit QMD retrieval limits into `openclaw.json`, raising the timeout to `15000ms` for larger live knowledge bases.
+- The QMD backend status output now shows `timeoutMs` and `maxResults` directly.
 - OpenAI OAuth remains handled by OpenClaw's native login flow, not by storing client secrets in CODE SHIELD.
+- Non-native providers such as DeepSeek and GLM-5 remain managed through `models.providers` instead of the invalid legacy path.
 
-- 现在在 CODE SHIELD 配置 DeepSeek、GLM-5 这类非原生 provider 时，会写入 `openclaw.json -> models.providers`，不再使用无效的 `auth.providers` 路径。
-- 现有服务器可以无损收敛回合法的 OpenClaw 配置，不需要把 API Key 从 CODE SHIELD 中挪出来。
-- OpenAI OAuth 继续由 OpenClaw 原生登录流程接管，而不是把 client secret 写进 CODE SHIELD。
+### v3.1.12 中文说明
+
+- `codeshield-config qmd-backend enable` 现在会把 QMD 检索限制显式写入 `openclaw.json`，把超时提升到 `15000ms`，适配更大的在线知识库。
+- QMD backend 的状态输出现在会直接显示 `timeoutMs` 与 `maxResults`。
+- OpenAI OAuth 继续由 OpenClaw 原生登录流程接管，而不是把 client secrets 存进 CODE SHIELD。
+- DeepSeek、GLM-5 这类非原生 provider 仍通过 `models.providers` 管理，不再走旧的无效路径。
 
 ## Quick Start / 快速开始
 
-### Fresh Install / 全新安装
+### Fresh Install / 一行代码全新安装
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/godlovestome/codeshield_claude/main/install.sh | bash
@@ -63,7 +67,7 @@ sudo codeshield-config add-model openai-oauth
 
 This step registers the provider, updates the whitelist, and prints the native OpenClaw OAuth onboarding command. It does **not** store client id or client secret in CODE SHIELD.
 
-这一步会注册 provider、更新代理白名单，并打印 OpenClaw 原生 OAuth 引导命令。它**不会**把 client id 或 client secret 存进 CODE SHIELD。
+这一步会注册 provider、更新白名单，并打印 OpenClaw 原生 OAuth 引导命令。它**不会**把 client id 或 client secret 存进 CODE SHIELD。
 
 Then complete OAuth in the server terminal:
 
@@ -78,39 +82,35 @@ sudo systemd-run --pty \
   /home/openclaw/.npm-global/bin/openclaw onboard --auth-choice openai-codex
 ```
 
-If OpenClaw prints an authorization link, open it in your browser, finish login, and paste the callback/result URL back into the terminal when prompted.
-
-如果 OpenClaw 输出授权链接，请在浏览器中完成登录，并在终端提示时把回调结果链接粘贴回去。
-
 ## DeepSeek Under CODE SHIELD / 在 CODE SHIELD 下使用 DeepSeek
 
 ```bash
 sudo codeshield-config add-model deepseek
 ```
 
-This now does four things together:
+This command will:
 
-- stores `DEEPSEEK_API_KEY` in CODE SHIELD secrets
-- updates the proxy whitelist for `api.deepseek.com`
-- writes DeepSeek model refs into `agents.defaults.models`
-- writes `models.providers.deepseek` into the protected OpenClaw runtime config
+- store `DEEPSEEK_API_KEY` in CODE SHIELD secrets
+- update the proxy whitelist for `api.deepseek.com`
+- write DeepSeek model refs into `agents.defaults.models`
+- write `models.providers.deepseek` into the protected OpenClaw runtime config
 
-现在这条命令会同时完成四件事：
+这条命令会：
 
 - 把 `DEEPSEEK_API_KEY` 存入 CODE SHIELD secrets
 - 更新 `api.deepseek.com` 的代理白名单
 - 把 DeepSeek 模型引用写入 `agents.defaults.models`
 - 把 `models.providers.deepseek` 写入受保护的 OpenClaw runtime 配置
 
-## Common Operations / 常用操作
+## QMD Under CODE SHIELD / 在 CODE SHIELD 下运行 QMD
+
+`codeshield-config qmd-backend enable` keeps OpenClaw pointed at the managed QMD wrapper and writes the runtime-safe config into the service workspace while preserving the writable `openclaw-svc` workspace.
+
+`codeshield-config qmd-backend enable` 会让 OpenClaw 指向受控的 QMD wrapper，并把适合 service runtime 的配置写入 `openclaw-svc` 工作区，同时保留可写的 service workspace。
+
+Useful commands / 常用命令：
 
 ```bash
-sudo codeshield-config show
-sudo codeshield-config edit
-sudo codeshield-config add-model openai
-sudo codeshield-config add-model openai-oauth
-sudo codeshield-config add-model deepseek
-sudo codeshield-config patch-provider deepseek
 sudo codeshield-config qmd-backend show
 sudo codeshield-config qmd-backend enable
 sudo systemctl status openclaw
@@ -125,10 +125,4 @@ sudo systemctl status codeshield-guardian
 
 - Telegram bot token 应继续由 `codeshield-config` 接管
 - 不要把 Telegram 密钥重新填回 `openclaw onboard`
-- `openclaw.json` 应负责描述通道行为，而不是保存真实 token
-
-## QMD Under CODE SHIELD / 在 CODE SHIELD 下运行 QMD
-
-`codeshield-config qmd-backend enable` keeps OpenClaw pointed at the managed QMD wrapper and writes the runtime-safe config into the service workspace while preserving the writable `openclaw-svc` workspace.
-
-`codeshield-config qmd-backend enable` 会让 OpenClaw 指向受控的 QMD wrapper，并把适合 service runtime 的配置写入 `openclaw-svc` 工作区，同时保留可写的 service workspace。
+- `openclaw.json` 应只描述通道行为，而不是保存真实 token

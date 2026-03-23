@@ -1,33 +1,25 @@
-# CODE SHIELD V3.1.10
+# CODE SHIELD V3.1.11
 
 **AI agent network security hardening for OpenClaw**  
 **面向 OpenClaw 的 AI Agent 网络安全加固框架**
 
 ## Purpose / 目标
 
-CODE SHIELD keeps OpenClaw inside a controlled Linux service runtime. It isolates the live service as `openclaw-svc`, keeps secrets under CODE SHIELD management, forces outbound traffic through the guarded proxy path, and still allows trusted local integrations such as QMD to run inside the same protected boundary.
+CODE SHIELD keeps OpenClaw inside a controlled Linux service runtime. It isolates the live service as `openclaw-svc`, keeps secrets under CODE SHIELD management, routes outbound traffic through the guarded proxy path, and still allows trusted local integrations such as QMD to run inside the same protected boundary.
 
-CODE SHIELD 用于让 OpenClaw 在受控的 Linux 服务运行时中工作。它会把在线服务隔离为 `openclaw-svc`，把密钥交给 CODE SHIELD 接管，把外发流量统一收束到受控代理链路，同时允许 QMD 这类可信本地集成继续在同一套保护边界内运行。
+CODE SHIELD 用于让 OpenClaw 在受控的 Linux 服务运行时中工作。它会把在线服务隔离为 `openclaw-svc`，把密钥交给 CODE SHIELD 接管，把外发流量统一收束到受控代理路径，同时允许 QMD 这类可信本地集成继续在同一套保护边界内运行。
 
 ## Version Focus / 版本重点
 
-### v3.1.10
+### v3.1.11
 
-- Non-native providers such as DeepSeek and GLM-5 are now written into `openclaw.json -> auth.providers` during CODE SHIELD setup.
-- This fixes the new OpenClaw runtime path where model whitelist entries alone are not enough for provider discovery.
-- DeepSeek can now be managed under CODE SHIELD without moving API keys back into unprotected OpenClaw config files.
+- Non-native providers such as DeepSeek and GLM-5 are now written into `openclaw.json -> models.providers` instead of the invalid `auth.providers` path.
+- Existing servers can now converge back to a valid OpenClaw config without moving API keys out of CODE SHIELD.
+- OpenAI OAuth remains handled by OpenClaw's native login flow, not by storing client secrets in CODE SHIELD.
 
-- 现在在 CODE SHIELD 配置 DeepSeek、GLM-5 这类非原生 provider 时，会同步写入 `openclaw.json -> auth.providers`。
-- 这修复了新版 OpenClaw 运行时中“只有模型白名单还不够，provider 仍然发现不到”的问题。
-- DeepSeek 现在可以继续在 CODE SHIELD 框架下接管，不需要把 API Key 写回不受保护的 OpenClaw 配置文件。
-
-### v3.1.9
-
-- Non-destructive updates now correctly deploy the proxy preload asset before hardening runs.
-- Existing servers can now upgrade cleanly to the OpenClaw-native OpenAI OAuth flow.
-
-- 无损更新现在会先正确下发代理 preload 资源，再执行 hardening。
-- 现有服务器现在可以正常升级到 OpenClaw 原生 OpenAI OAuth 流程。
+- 现在在 CODE SHIELD 配置 DeepSeek、GLM-5 这类非原生 provider 时，会写入 `openclaw.json -> models.providers`，不再使用无效的 `auth.providers` 路径。
+- 现有服务器可以无损收敛回合法的 OpenClaw 配置，不需要把 API Key 从 CODE SHIELD 中挪出来。
+- OpenAI OAuth 继续由 OpenClaw 原生登录流程接管，而不是把 client secret 写进 CODE SHIELD。
 
 ## Quick Start / 快速开始
 
@@ -37,7 +29,7 @@ CODE SHIELD 用于让 OpenClaw 在受控的 Linux 服务运行时中工作。它
 curl -fsSL https://raw.githubusercontent.com/godlovestome/codeshield_claude/main/install.sh | bash
 ```
 
-### Non-Destructive Update / 无损更新
+### Non-Destructive Update / 一行代码无损更新
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/godlovestome/codeshield_claude/main/install.sh | sudo bash -s -- --update
@@ -101,14 +93,14 @@ This now does four things together:
 - stores `DEEPSEEK_API_KEY` in CODE SHIELD secrets
 - updates the proxy whitelist for `api.deepseek.com`
 - writes DeepSeek model refs into `agents.defaults.models`
-- writes `auth.providers.deepseek` into the protected OpenClaw runtime config
+- writes `models.providers.deepseek` into the protected OpenClaw runtime config
 
 现在这条命令会同时完成四件事：
 
 - 把 `DEEPSEEK_API_KEY` 存入 CODE SHIELD secrets
 - 更新 `api.deepseek.com` 的代理白名单
 - 把 DeepSeek 模型引用写入 `agents.defaults.models`
-- 把 `auth.providers.deepseek` 写入受保护的 OpenClaw runtime 配置
+- 把 `models.providers.deepseek` 写入受保护的 OpenClaw runtime 配置
 
 ## Common Operations / 常用操作
 

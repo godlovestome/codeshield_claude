@@ -1,25 +1,25 @@
-# CODE SHIELD V3.1.7
+# CODE SHIELD V3.1.8
 
-**AI Agent network security hardening for OpenClaw**  
+**AI agent network security hardening for OpenClaw**  
 **面向 OpenClaw 的 AI Agent 网络安全加固框架**
 
 ## Purpose / 目标
 
-CODE SHIELD is a defense-in-depth framework for OpenClaw on Linux servers. It isolates the live service as `openclaw-svc`, externalizes secrets into CODE SHIELD management, forces outbound traffic through the controlled proxy path, and keeps local integrations such as QMD under the same guarded runtime model.
+CODE SHIELD keeps OpenClaw running inside a controlled runtime on Linux servers. It isolates the live service as `openclaw-svc`, keeps secrets under CODE SHIELD management, forces outbound traffic through the guarded proxy path, and lets local integrations such as QMD continue to work inside the same protected boundary.
 
-CODE SHIELD 是面向 Linux 服务器上 OpenClaw 的纵深防御框架。它会把在线服务隔离为 `openclaw-svc` 用户，把密钥统一移交给 CODE SHIELD 管理，把外发网络强制收敛到受控代理路径，并让 QMD 这类本地集成也运行在同一套受保护模型下。
+CODE SHIELD 用于在 Linux 服务器上把 OpenClaw 运行在受控安全边界内。它会把在线服务隔离到 `openclaw-svc`，把密钥交给 CODE SHIELD 接管，把外发网络统一收敛到受控代理链路，同时让 QMD 这类本地集成继续在同一套保护模型下运行。
 
-**Version focus / 版本重点：v3.1.7**
+## Version Focus / 版本重点
 
-- Adds a live-retrieval verification guardrail for QMD availability questions.
-- Refreshes the managed SOUL injection block on existing runtimes, so old deployments pick up new guardrails without reinstalling.
-- Makes the guardian finish with an explicit success exit after completing the SOUL refresh path, avoiding false non-zero exits from stray trailing control characters on hot-synced scripts.
-- Keeps the Telegram/OpenClaw runtime under the same CODE SHIELD-managed secret and workspace model.
+### v3.1.8
 
-- 新增 QMD 可用性实时验证护栏。
-- 让已有部署上的受管 SOUL 注入块也能被刷新，避免模板更新后运行时仍停留在旧规则。
-- 让 guardian 在完成 SOUL 刷新后显式成功退出，避免热同步脚本尾部杂质导致的假失败。
-- 继续保持 Telegram / OpenClaw 运行时处于同一套 CODE SHIELD 管理的密钥与 workspace 模型之下。
+- `codeshield-config add-model openai-oauth` now uses OpenClaw's native OAuth onboarding flow instead of asking for `OPENAI_CLIENT_ID` and `OPENAI_CLIENT_SECRET`.
+- OpenAI OAuth tokens stay in the OpenClaw runtime auth store instead of being written into CODE SHIELD secrets.
+- Runtime sync now preserves service-side OAuth state and no longer overwrites `openclaw-svc` auth files during guardian refreshes.
+
+- `codeshield-config add-model openai-oauth` 现在改为调用 OpenClaw 原生 OAuth 引导流程，不再要求手动填写 `OPENAI_CLIENT_ID` 和 `OPENAI_CLIENT_SECRET`。
+- OpenAI OAuth token 会保留在 OpenClaw 自己的运行时认证存储中，不会写入 CODE SHIELD secrets。
+- runtime 同步现在会保护 service 侧的 OAuth 状态，guardian 刷新时不再覆盖 `openclaw-svc` 的认证文件。
 
 ## Quick Start / 快速开始
 
@@ -35,100 +35,72 @@ curl -fsSL https://raw.githubusercontent.com/godlovestome/codeshield_claude/main
 curl -fsSL https://raw.githubusercontent.com/godlovestome/codeshield_claude/main/install.sh | sudo bash -s -- --update
 ```
 
-After deployment, use `codeshield-config` for configuration changes instead of rerunning onboarding or writing secrets into `openclaw.json`.
+After deployment, use `codeshield-config` for configuration updates instead of writing secrets back into `openclaw.json`.
 
-部署完成后，请使用 `codeshield-config` 变更配置，不要重新跑 onboard，也不要把密钥直接写回 `openclaw.json`。
+部署完成后，请继续使用 `codeshield-config` 维护配置，不要把密钥重新写回 `openclaw.json`。
 
 ## Core Security Model / 核心安全模型
 
 - `openclaw.service` runs as `openclaw-svc`
-- secrets live in CODE SHIELD, not inline in `openclaw.json`
-- secrets are decrypted to `/run/openclaw-codeshield/secrets.env`
+- secrets are managed by CODE SHIELD and decrypted to `/run/openclaw-codeshield/secrets.env`
 - outbound traffic is forced through the controlled proxy path
-- local loopback services remain reachable with `NO_PROXY`
-- runtime config is mirrored into `/var/lib/openclaw-svc/.openclaw/`
+- local loopback services remain reachable through `NO_PROXY`
+- service runtime config lives under `/var/lib/openclaw-svc/.openclaw/`
 
 - `openclaw.service` 以 `openclaw-svc` 身份运行
-- 密钥由 CODE SHIELD 管理，不以内联形式留在 `openclaw.json`
-- 密钥解密后只落在 `/run/openclaw-codeshield/secrets.env`
-- 外发流量强制经过受控代理路径
+- 密钥由 CODE SHIELD 接管，并解密到 `/run/openclaw-codeshield/secrets.env`
+- 外发流量统一通过受控代理链路
 - 本地 loopback 服务通过 `NO_PROXY` 保持可用
-- 运行时配置镜像到 `/var/lib/openclaw-svc/.openclaw/`
+- service runtime 配置位于 `/var/lib/openclaw-svc/.openclaw/`
 
-## Important Operations / 重要操作
+## OpenAI OAuth Under CODE SHIELD / 在 CODE SHIELD 下使用 OpenAI OAuth
+
+Run this first:
+
+```bash
+sudo codeshield-config add-model openai-oauth
+```
+
+This step registers the provider, updates the whitelist, and prints the native OpenClaw OAuth command. It does **not** store client id or client secret in CODE SHIELD.
+
+这一步会注册 provider、更新代理白名单，并打印 OpenClaw 原生 OAuth 命令。它**不会**把 client id 或 client secret 存进 CODE SHIELD。
+
+Then complete OAuth in the server terminal:
+
+```bash
+sudo -u openclaw-svc env HOME=/var/lib/openclaw-svc XDG_CONFIG_HOME=/var/lib/openclaw-svc/.config /home/openclaw/.npm-global/bin/openclaw onboard --auth-choice openai-codex
+```
+
+If OpenClaw prints an authorization link, open it in your browser, finish login, and paste the callback/result URL back into the terminal when prompted.
+
+如果 OpenClaw 输出授权链接，请在浏览器中完成登录，并在终端提示时把回调结果链接粘贴回去。
+
+## Common Operations / 常用操作
 
 ```bash
 sudo codeshield-config show
 sudo codeshield-config edit
+sudo codeshield-config add-model openai
+sudo codeshield-config add-model openai-oauth
 sudo codeshield-config add-model deepseek
 sudo codeshield-config qmd-backend show
 sudo codeshield-config qmd-backend enable
-sudo codeshield-config qmd-backend disable
+sudo systemctl status openclaw
+sudo systemctl status codeshield-guardian
 ```
 
-### Telegram and Secret Ownership / Telegram 与密钥归属
+## Telegram And Secret Ownership / Telegram 与密钥归属
 
-- Telegram bot token and chat id must remain under `codeshield-config` management.
-- Do not put Telegram secrets back into `openclaw onboard` prompts or inline `openclaw.json`.
-- `openclaw.json` should describe channel behavior, not store the actual token.
+- Telegram bot token should remain under `codeshield-config`
+- do not move Telegram secrets back into `openclaw onboard`
+- `openclaw.json` should describe channel behavior, not hold the real token
 
-- Telegram bot token 和 chat id 必须继续由 `codeshield-config` 接管。
-- 不要再把 Telegram 密钥重新填回 `openclaw onboard` 或内联到 `openclaw.json`。
-- `openclaw.json` 负责描述通道行为，不负责保存真实 token。
+- Telegram bot token 应继续由 `codeshield-config` 接管
+- 不要把 Telegram 密钥重新填回 `openclaw onboard`
+- `openclaw.json` 负责描述通道行为，不负责保存真实 token
 
 ## QMD Under CODE SHIELD / 在 CODE SHIELD 下运行 QMD
 
-`codeshield-config qmd-backend enable` will:
+`codeshield-config qmd-backend enable` keeps OpenClaw pointed at the managed QMD wrapper and writes the runtime-safe config into the service workspace while preserving the writable `openclaw-svc` workspace.
 
-- keep `memory.backend=qmd`
-- point OpenClaw to `/home/openclaw/scripts/qmd-openclaw-wrapper.sh`
-- keep the QMD data source under `/home/openclaw/qmd-index/*`
-- write the runtime-safe config into `/var/lib/openclaw-svc/.openclaw/openclaw.json`
-- preserve the writable service workspace at `/var/lib/openclaw-svc/.openclaw/workspace`
-
-`codeshield-config qmd-backend enable` 会：
-
-- 保持 `memory.backend=qmd`
-- 把 OpenClaw 指向 `/home/openclaw/scripts/qmd-openclaw-wrapper.sh`
-- 继续使用 `/home/openclaw/qmd-index/*` 作为 QMD 数据源
-- 把适用于 runtime 的配置写入 `/var/lib/openclaw-svc/.openclaw/openclaw.json`
-- 保留可写的 service workspace：`/var/lib/openclaw-svc/.openclaw/workspace`
-
-## Recommended Checks / 推荐检查命令
-
-```bash
-sudo codeshield-config show
-sudo codeshield-config qmd-backend show
-sudo systemctl status openclaw
-sudo systemctl status codeshield-secrets
-sudo systemctl status qmd-mcp
-sudo /usr/local/sbin/security-audit.sh
-```
-
-## OpenClaw Update Safety / OpenClaw 更新安全
-
-- Use the CODE SHIELD update command above.
-- Do not overwrite `/etc/openclaw-codeshield/` manually.
-- Guardian should re-sync runtime data after updates.
-- If needed, re-run:
-
-```bash
-sudo codeshield-config qmd-backend enable
-```
-
-## QMD Verification Behavior / QMD 可用性验证行为
-
-- When a user asks whether QMD or knowledge-base retrieval is working, the live runtime should verify via an approved retrieval call before answering.
-- This reduces false "still unavailable" replies caused by stale Telegram session context after backend repairs.
-
-- 当用户询问 QMD 或知识库检索是否正常时，运行时会先做一次受控检索验证，再给出结论。
-- 这样可以减少后端已经修好但 Telegram 老会话仍沿用旧上下文、继续答“还不行”的误报。
-
-- 请使用上面的 CODE SHIELD 无损更新命令。
-- 不要手工覆盖 `/etc/openclaw-codeshield/`。
-- OpenClaw 更新后，guardian 应重新同步 runtime 数据。
-- 如有需要，可重新执行：
-
-```bash
-sudo codeshield-config qmd-backend enable
-```
+`codeshield-config qmd-backend enable` 会让 OpenClaw 指向受控的 QMD wrapper，并把适合 service runtime 的配置写入 `openclaw-svc` 工作区，同时保留可写的 service workspace。

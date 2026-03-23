@@ -25,7 +25,7 @@ class RuntimeSyncTests(unittest.TestCase):
             self.assertIn('install -m 0600 -o openclaw-svc -g openclaw-svc', text)
 
     def test_install_version_bumped(self) -> None:
-        self.assertIn('readonly CS_VERSION="3.1.7"', read_text(INSTALL))
+        self.assertIn('readonly CS_VERSION="3.1.8"', read_text(INSTALL))
 
     def test_codeshield_config_can_manage_qmd_backend(self) -> None:
         text = read_text(CONFIG_CLI)
@@ -77,6 +77,27 @@ class RuntimeSyncTests(unittest.TestCase):
         self.assertIn('legacy_heading = \'## Prompt Injection Resistance (CODE SHIELD V3)\'', text)
         self.assertIn('SOUL.md protection refreshed', text)
         self.assertTrue(text.rstrip().endswith('exit 0'))
+
+    def test_openai_oauth_uses_openclaw_native_flow(self) -> None:
+        text = read_text(CONFIG_CLI)
+        self.assertIn('print_openai_oauth_next_steps()', text)
+        self.assertIn('onboard --auth-choice openai-codex', text)
+        self.assertIn('MODEL_SETUP_FLOW=$setupflow', text)
+        self.assertIn('MODEL_OPENCLAW_PROVIDER=$openclaw_provider', text)
+
+    def test_openai_oauth_no_longer_collects_client_secret_values(self) -> None:
+        text = read_text(CONFIG_CLI)
+        self.assertIn('[openai-oauth]=""', text)
+        self.assertNotIn('[openai-oauth]="OPENAI_CLIENT_ID,OPENAI_CLIENT_SECRET,OPENAI_ORG_ID"', text)
+
+    def test_runtime_sync_preserves_service_auth_state(self) -> None:
+        for path in (ISOLATION, GUARDIAN):
+            text = read_text(path)
+            self.assertIn('sync_openclaw_runtime_tree()', text)
+            self.assertIn('--exclude=agents/*/agent/auth.json', text)
+            self.assertIn('--exclude=agents/*/agent/auth-profiles.json', text)
+            self.assertIn('--exclude=identity/device-auth.json', text)
+            self.assertIn('seed_service_auth_state_once', text)
 
 
 if __name__ == '__main__':

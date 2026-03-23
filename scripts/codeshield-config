@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CODE SHIELD V3.1.4 -- Configuration Management CLI
+# CODE SHIELD V3.1.8 -- Configuration Management CLI
 # Usage: codeshield-config <command> [args]
 #
 # Commands:
@@ -195,6 +195,47 @@ restart_openclaw() {
         systemctl restart openclaw 2>/dev/null || true
         ok "openclaw service restarted."
     fi
+}
+
+find_openclaw_bin() {
+    local candidate
+    for candidate in \
+        /home/openclaw/.npm-global/bin/openclaw \
+        /usr/local/bin/openclaw \
+        /usr/bin/openclaw; do
+        if [ -x "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+print_openai_oauth_next_steps() {
+    local openclaw_bin="${1:-/home/openclaw/.npm-global/bin/openclaw}"
+    cat <<EOF
+
+${BOLD}OpenAI OAuth is managed by OpenClaw's native login flow.${RESET}
+${BOLD}OpenAI OAuth 由 OpenClaw 原生登录流程接管。${RESET}
+
+No client id or client secret was stored in CODE SHIELD secrets.
+本次不会把 client id 或 client secret 写入 CODE SHIELD secrets。
+
+Run the following command in the server terminal to complete OAuth:
+请在服务器终端运行下面这条命令完成 OAuth：
+
+  sudo -u openclaw-svc env HOME=/var/lib/openclaw-svc XDG_CONFIG_HOME=/var/lib/openclaw-svc/.config $openclaw_bin onboard --auth-choice openai-codex
+
+If OpenClaw prints a browser link, open it in your browser, finish login,
+and paste the callback/result URL back into the terminal when prompted.
+如果 OpenClaw 输出浏览器认证链接，请在浏览器中完成登录，并把回调结果链接粘贴回终端。
+
+Recommended follow-up checks:
+推荐后续检查：
+
+  sudo -u openclaw-svc env HOME=/var/lib/openclaw-svc XDG_CONFIG_HOME=/var/lib/openclaw-svc/.config $openclaw_bin status
+  sudo systemctl restart openclaw
+EOF
 }
 
 ###############################################################################
@@ -905,7 +946,7 @@ cmd_add_model() {
     # Built-in provider definitions
     declare -A BUILTIN_NAMES=(
         [openai]="OpenAI"
-        [openai-oauth]="OpenAI (OAuth)"
+        [openai-oauth]="OpenAI (OAuth / OpenClaw Native)"
         [anthropic]="Anthropic / Claude"
         [deepseek]="DeepSeek (深度求索)"
         [glm5]="GLM5 (智谱 BigModel)"
@@ -914,7 +955,7 @@ cmd_add_model() {
     )
     declare -A BUILTIN_DOMAINS=(
         [openai]="api.openai.com"
-        [openai-oauth]="api.openai.com,auth0.openai.com"
+        [openai-oauth]="api.openai.com,auth.openai.com,auth0.openai.com"
         [anthropic]="api.anthropic.com"
         [deepseek]="api.deepseek.com"
         [glm5]="open.bigmodel.cn"
@@ -923,7 +964,7 @@ cmd_add_model() {
     )
     declare -A BUILTIN_VARS=(
         [openai]="OPENAI_API_KEY"
-        [openai-oauth]="OPENAI_CLIENT_ID,OPENAI_CLIENT_SECRET,OPENAI_ORG_ID"
+        [openai-oauth]=""
         [anthropic]="ANTHROPIC_API_KEY"
         [deepseek]="DEEPSEEK_API_KEY"
         [glm5]="GLM_API_KEY"
@@ -938,6 +979,24 @@ cmd_add_model() {
         [glm5]="apikey"
         [kimi]="apikey"
         [minimax]="apikey"
+    )
+    declare -A BUILTIN_SETUP_FLOW=(
+        [openai]="codeshield-secret"
+        [openai-oauth]="openclaw-oauth"
+        [anthropic]="codeshield-secret"
+        [deepseek]="codeshield-secret"
+        [glm5]="codeshield-secret"
+        [kimi]="codeshield-secret"
+        [minimax]="codeshield-secret"
+    )
+    declare -A BUILTIN_OPENCLAW_PROVIDER=(
+        [openai]="openai"
+        [openai-oauth]="openai-codex"
+        [anthropic]="anthropic"
+        [deepseek]="deepseek"
+        [glm5]="glm5"
+        [kimi]="kimi"
+        [minimax]="minimax"
     )
 
     if [ -z "$provider" ]; then
@@ -967,7 +1026,7 @@ cmd_add_model() {
         esac
     fi
 
-    local name domains varnames authtype
+    local name domains varnames authtype setupflow openclaw_provider
 
     if [ "$provider" = "custom" ]; then
         printf "\n${BOLD}Provider name${RESET}: " >/dev/tty
@@ -1000,14 +1059,18 @@ cmd_add_model() {
         printf "${BOLD}Auth type${RESET} (apikey/oauth) [apikey]: " >/dev/tty
         read -r authtype </dev/tty
         authtype="${authtype:-apikey}"
+        setupflow="codeshield-secret"
+        openclaw_provider="custom"
     else
         name="${BUILTIN_NAMES[$provider]}"
         domains="${BUILTIN_DOMAINS[$provider]}"
         varnames="${BUILTIN_VARS[$provider]}"
         authtype="${BUILTIN_AUTH[$provider]}"
+        setupflow="${BUILTIN_SETUP_FLOW[$provider]}"
+        openclaw_provider="${BUILTIN_OPENCLAW_PROVIDER[$provider]}"
         printf "\n${BOLD}Adding: %s${RESET}\n" "$name"
         printf "  Domains: %s\n" "$domains"
-        printf "  Variables: %s\n" "$varnames"
+        printf "  Variables: %s\n" "${varnames:-"(managed by runtime OAuth)"}"
         printf "  Auth: %s\n\n" "$authtype"
     fi
 
@@ -1043,6 +1106,8 @@ MODEL_NAME=$name
 MODEL_DOMAINS=$domains
 MODEL_VARS=$varnames
 MODEL_AUTH_TYPE=$authtype
+MODEL_SETUP_FLOW=$setupflow
+MODEL_OPENCLAW_PROVIDER=$openclaw_provider
 MEOF
     chmod 0600 "$MODELS_DIR/${safename}.conf"
     ok "Model config written: $MODELS_DIR/${safename}.conf"
@@ -1063,6 +1128,12 @@ MEOF
     reencrypt_secrets
     reload_squid
     restart_openclaw
+
+    if [ "$provider" = "openai-oauth" ]; then
+        local openclaw_bin
+        openclaw_bin=$(find_openclaw_bin || true)
+        print_openai_oauth_next_steps "${openclaw_bin:-/home/openclaw/.npm-global/bin/openclaw}"
+    fi
 
     printf "\n${GREEN}LLM provider '%s' added successfully.${RESET}\n" "$name"
 }
@@ -1208,6 +1279,7 @@ Commands:
   add-model [provider]       Add an LLM provider (interactive menu)
                              Providers: openai, openai-oauth, anthropic, deepseek, glm5, kimi, minimax, custom
                              Non-native providers (deepseek, glm5) automatically patch openclaw JS files.
+                             openai-oauth uses OpenClaw's native OAuth login flow and does not store client secrets.
   patch-provider <provider>  Manually patch openclaw JS files for a non-native provider.
                              Use after openclaw updates to re-apply provider registration.
                              Supported: deepseek, glm5
@@ -1225,6 +1297,7 @@ Examples:
   codeshield-config show
   codeshield-config set ANTHROPIC_API_KEY=sk-ant-xxx
   codeshield-config add-model anthropic
+  codeshield-config add-model openai-oauth
   codeshield-config add-model deepseek
   codeshield-config add-model minimax
   codeshield-config add-channel

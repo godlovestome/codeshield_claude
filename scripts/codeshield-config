@@ -256,6 +256,7 @@ clear_openclaw_caches() {
         found=1
     done < <(find /tmp -maxdepth 5 -type d -name "jiti" 2>/dev/null || true)
     [ "$found" -eq 0 ] && info "No openclaw runtime caches found (already clean)."
+    return 0
 }
 
 ###############################################################################

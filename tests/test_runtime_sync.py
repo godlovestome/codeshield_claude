@@ -100,6 +100,14 @@ class RuntimeSyncTests(unittest.TestCase):
         self.assertIn('[openai-oauth]=""', text)
         self.assertNotIn('[openai-oauth]="OPENAI_CLIENT_ID,OPENAI_CLIENT_SECRET,OPENAI_ORG_ID"', text)
 
+    def test_cache_clear_helper_does_not_abort_followup_steps(self) -> None:
+        text = read_text(CONFIG_CLI)
+        self.assertIn('clear_openclaw_caches()', text)
+        self.assertIn(
+            '[ "$found" -eq 0 ] && info "No openclaw runtime caches found (already clean)."\n    return 0',
+            text,
+        )
+
     def test_runtime_sync_preserves_service_auth_state(self) -> None:
         for path in (ISOLATION, GUARDIAN):
             text = read_text(path)

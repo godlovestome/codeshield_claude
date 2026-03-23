@@ -1,15 +1,25 @@
-# CODE SHIELD V3.1.8
+# CODE SHIELD V3.1.9
 
 **AI agent network security hardening for OpenClaw**  
 **面向 OpenClaw 的 AI Agent 网络安全加固框架**
 
 ## Purpose / 目标
 
-CODE SHIELD keeps OpenClaw running inside a controlled runtime on Linux servers. It isolates the live service as `openclaw-svc`, keeps secrets under CODE SHIELD management, forces outbound traffic through the guarded proxy path, and lets local integrations such as QMD continue to work inside the same protected boundary.
+CODE SHIELD keeps OpenClaw inside a controlled Linux service runtime. It isolates the live service as `openclaw-svc`, keeps secrets under CODE SHIELD management, forces outbound traffic through the guarded proxy path, and still allows trusted local integrations such as QMD to run inside the same protected boundary.
 
-CODE SHIELD 用于在 Linux 服务器上把 OpenClaw 运行在受控安全边界内。它会把在线服务隔离到 `openclaw-svc`，把密钥交给 CODE SHIELD 接管，把外发网络统一收敛到受控代理链路，同时让 QMD 这类本地集成继续在同一套保护模型下运行。
+CODE SHIELD 用于让 OpenClaw 在受控的 Linux 服务运行时中工作。它会把在线服务隔离为 `openclaw-svc`，把密钥交给 CODE SHIELD 接管，把外发流量统一收束到受控代理链路，同时允许 QMD 这类可信本地集成继续在同一套保护边界内运行。
 
 ## Version Focus / 版本重点
+
+### v3.1.9
+
+- Non-destructive updates now correctly deploy the proxy preload asset before hardening runs.
+- `install.sh --update` no longer crashes on the undefined `CS_DIR` reference.
+- Existing servers can now upgrade cleanly to the OpenClaw-native OpenAI OAuth flow.
+
+- 无损更新现在会先正确下发代理 preload 资源，再执行 hardening。
+- `install.sh --update` 不会再因为未定义的 `CS_DIR` 变量中途崩溃。
+- 现有服务器现在可以正常升级到 OpenClaw 原生 OpenAI OAuth 流程。
 
 ### v3.1.8
 
@@ -19,7 +29,7 @@ CODE SHIELD 用于在 Linux 服务器上把 OpenClaw 运行在受控安全边界
 
 - `codeshield-config add-model openai-oauth` 现在改为调用 OpenClaw 原生 OAuth 引导流程，不再要求手动填写 `OPENAI_CLIENT_ID` 和 `OPENAI_CLIENT_SECRET`。
 - OpenAI OAuth token 会保留在 OpenClaw 自己的运行时认证存储中，不会写入 CODE SHIELD secrets。
-- runtime 同步现在会保护 service 侧的 OAuth 状态，guardian 刷新时不再覆盖 `openclaw-svc` 的认证文件。
+- runtime 同步现在会保护 service 侧 OAuth 状态，guardian 刷新时不再覆盖 `openclaw-svc` 的认证文件。
 
 ## Quick Start / 快速开始
 
@@ -35,7 +45,7 @@ curl -fsSL https://raw.githubusercontent.com/godlovestome/codeshield_claude/main
 curl -fsSL https://raw.githubusercontent.com/godlovestome/codeshield_claude/main/install.sh | sudo bash -s -- --update
 ```
 
-After deployment, use `codeshield-config` for configuration updates instead of writing secrets back into `openclaw.json`.
+After deployment, keep using `codeshield-config` for configuration changes instead of writing secrets back into `openclaw.json`.
 
 部署完成后，请继续使用 `codeshield-config` 维护配置，不要把密钥重新写回 `openclaw.json`。
 
@@ -49,7 +59,7 @@ After deployment, use `codeshield-config` for configuration updates instead of w
 
 - `openclaw.service` 以 `openclaw-svc` 身份运行
 - 密钥由 CODE SHIELD 接管，并解密到 `/run/openclaw-codeshield/secrets.env`
-- 外发流量统一通过受控代理链路
+- 外发流量统一通过受控代理路径
 - 本地 loopback 服务通过 `NO_PROXY` 保持可用
 - service runtime 配置位于 `/var/lib/openclaw-svc/.openclaw/`
 
@@ -61,9 +71,9 @@ Run this first:
 sudo codeshield-config add-model openai-oauth
 ```
 
-This step registers the provider, updates the whitelist, and prints the native OpenClaw OAuth command. It does **not** store client id or client secret in CODE SHIELD.
+This step registers the provider, updates the whitelist, and prints the native OpenClaw OAuth onboarding command. It does **not** store client id or client secret in CODE SHIELD.
 
-这一步会注册 provider、更新代理白名单，并打印 OpenClaw 原生 OAuth 命令。它**不会**把 client id 或 client secret 存进 CODE SHIELD。
+这一步会注册 provider、更新代理白名单，并打印 OpenClaw 原生 OAuth 引导命令。它**不会**把 client id 或 client secret 存进 CODE SHIELD。
 
 Then complete OAuth in the server terminal:
 
@@ -97,7 +107,7 @@ sudo systemctl status codeshield-guardian
 
 - Telegram bot token 应继续由 `codeshield-config` 接管
 - 不要把 Telegram 密钥重新填回 `openclaw onboard`
-- `openclaw.json` 负责描述通道行为，不负责保存真实 token
+- `openclaw.json` 应负责描述通道行为，而不是保存真实 token
 
 ## QMD Under CODE SHIELD / 在 CODE SHIELD 下运行 QMD
 

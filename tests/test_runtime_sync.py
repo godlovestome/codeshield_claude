@@ -8,6 +8,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 ISOLATION = REPO_ROOT / 'lib' / '02-isolation.sh'
 GUARDIAN = REPO_ROOT / 'scripts' / 'openclaw-guardian'
 INSTALL = REPO_ROOT / 'install.sh'
+HARDENING = REPO_ROOT / 'lib' / '04-hardening.sh'
 CONFIG_CLI = REPO_ROOT / 'scripts' / 'codeshield-config'
 SOUL_TEMPLATE = REPO_ROOT / 'templates' / 'soul-injection.md'
 
@@ -25,7 +26,7 @@ class RuntimeSyncTests(unittest.TestCase):
             self.assertIn('install -m 0600 -o openclaw-svc -g openclaw-svc', text)
 
     def test_install_version_bumped(self) -> None:
-        self.assertIn('readonly CS_VERSION="3.1.8"', read_text(INSTALL))
+        self.assertIn('readonly CS_VERSION="3.1.9"', read_text(INSTALL))
 
     def test_codeshield_config_can_manage_qmd_backend(self) -> None:
         text = read_text(CONFIG_CLI)
@@ -98,6 +99,15 @@ class RuntimeSyncTests(unittest.TestCase):
             self.assertIn('--exclude=agents/*/agent/auth-profiles.json', text)
             self.assertIn('--exclude=identity/device-auth.json', text)
             self.assertIn('seed_service_auth_state_once', text)
+
+    def test_install_fetches_proxy_preload_asset(self) -> None:
+        text = read_text(INSTALL)
+        self.assertIn('scripts/proxy-preload.mjs', text)
+
+    def test_hardening_does_not_reference_undefined_cs_dir(self) -> None:
+        text = read_text(HARDENING)
+        self.assertNotIn('$CS_DIR/scripts/proxy-preload.mjs', text)
+        self.assertIn('PRELOAD_SRC="$CS_LIB_DIR/proxy-preload.mjs"', text)
 
 
 if __name__ == '__main__':

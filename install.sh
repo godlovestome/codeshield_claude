@@ -23,7 +23,7 @@ export DEBIAN_FRONTEND=noninteractive
 ###############################################################################
 # Constants
 ###############################################################################
-readonly CS_VERSION="3.1.8"
+readonly CS_VERSION="3.1.9"
 readonly CS_CONF_DIR="/etc/openclaw-codeshield"
 readonly CS_LIB_DIR="/usr/local/lib/openclaw-codeshield"
 readonly CS_SBIN_DIR="/usr/local/sbin"
@@ -195,6 +195,7 @@ SCRIPTS=(
     scripts/openclaw-cost-monitor
     scripts/openclaw-guardian
     scripts/emergency-lockdown
+    scripts/proxy-preload.mjs
     scripts/squid-injection-guard.py
     scripts/codeshield-secrets-seal
     scripts/codeshield-secrets-unseal

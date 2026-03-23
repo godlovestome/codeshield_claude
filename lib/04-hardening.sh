@@ -447,17 +447,14 @@ fi
 #    through ProxyAgent, ensuring Squid is always used.
 ###############################################################################
 deploy_proxy_preload() {
-    local PRELOAD_SRC="$CS_LIB_DIR/../codeshield_claude/scripts/proxy-preload.mjs"
+    local PRELOAD_SRC="$CS_LIB_DIR/proxy-preload.mjs"
     local PRELOAD_DEST="$CS_LIB_DIR/proxy-preload.mjs"
-
-    # Try installer source first, fall back to repo location
-    if [ -f "$CS_DIR/scripts/proxy-preload.mjs" ]; then
-        PRELOAD_SRC="$CS_DIR/scripts/proxy-preload.mjs"
-    fi
 
     # Deploy the preload script
     if [ -f "$PRELOAD_SRC" ]; then
-        cp "$PRELOAD_SRC" "$PRELOAD_DEST"
+        if [ "$PRELOAD_SRC" != "$PRELOAD_DEST" ]; then
+            cp "$PRELOAD_SRC" "$PRELOAD_DEST"
+        fi
     else
         # Inline fallback: create minimal preload if source not found
         cat > "$PRELOAD_DEST" << 'PRELOAD'

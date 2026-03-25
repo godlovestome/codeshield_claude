@@ -11,6 +11,7 @@ readonly CS_DATA_DIR="/var/lib/openclaw-codeshield"
 readonly CS_LOG_DIR="/var/log/openclaw-codeshield"
 readonly CS_SBIN_DIR="/usr/local/sbin"
 readonly SECRETS_FILE="$CS_CONF_DIR/secrets.env"
+readonly MODELS_DIR="$CS_CONF_DIR/models.d"
 readonly OPENCLAW_HOME="/home/openclaw"
 readonly OPENCLAW_SVC_HOME="/var/lib/openclaw-svc"
 readonly OPENCLAW_JSON="$OPENCLAW_HOME/.openclaw/openclaw.json"
@@ -118,6 +119,85 @@ PYEOF
         "$OPENCLAW_SVC_HOME/.openclaw/agents/main/agent/auth-profiles.json" \
         "$OPENCLAW_SVC_HOME/.openclaw/identity/device-auth.json" 2>/dev/null || true
     log "  Runtime auth state refreshed from interactive home when newer."
+}
+
+sync_configured_model_providers() {
+    [ -d "$MODELS_DIR" ] || return 0
+    python3 - "$MODELS_DIR" "$OPENCLAW_HOME/.openclaw/openclaw.json" "$OPENCLAW_SVC_HOME/.openclaw/openclaw.json" <<'PYEOF'
+import json
+import sys
+from pathlib import Path
+
+models_dir = Path(sys.argv[1])
+json_files = [Path(p) for p in sys.argv[2:]]
+
+provider_specs = {
+    'deepseek': {
+        'env_var': 'DEEPSEEK_API_KEY',
+        'baseUrl': 'https://api.deepseek.com/v1',
+        'api': 'openai-completions',
+        'models': [
+            {'id': 'deepseek-chat', 'name': 'DeepSeek V3', 'reasoning': False, 'input': ['text']},
+            {'id': 'deepseek-reasoner', 'name': 'DeepSeek R1', 'reasoning': True, 'input': ['text']},
+        ],
+        'refs': ['deepseek/deepseek-chat', 'deepseek/deepseek-reasoner'],
+    },
+    'glm5': {
+        'env_var': 'GLM_API_KEY',
+        'baseUrl': 'https://open.bigmodel.cn/api/paas/v4',
+        'api': 'openai-completions',
+        'models': [
+            {'id': 'glm-4-flash', 'name': 'GLM-4-Flash', 'reasoning': False, 'input': ['text']},
+            {'id': 'glm-4-air', 'name': 'GLM-4-Air', 'reasoning': False, 'input': ['text']},
+        ],
+        'refs': ['glm5/glm-4-flash', 'glm5/glm-4-air'],
+    },
+}
+
+configured = set()
+for conf in sorted(models_dir.glob('*.conf')):
+    values = {}
+    for line in conf.read_text(encoding='utf-8', errors='replace').splitlines():
+        if not line or line.lstrip().startswith('#') or '=' not in line:
+            continue
+        key, value = line.split('=', 1)
+        values[key.strip()] = value.strip()
+    provider = values.get('MODEL_OPENCLAW_PROVIDER')
+    if provider in provider_specs:
+        configured.add(provider)
+
+for json_file in json_files:
+    if not json_file.exists():
+        continue
+    cfg = json.loads(json_file.read_text(encoding='utf-8'))
+    models = cfg.setdefault('models', {})
+    providers = models.setdefault('providers', {})
+    defaults = cfg.setdefault('agents', {}).setdefault('defaults', {})
+    allowed_models = defaults.setdefault('models', {})
+    changed = False
+    for provider in configured:
+        spec = provider_specs[provider]
+        desired = {
+            'baseUrl': spec['baseUrl'],
+            'api': spec['api'],
+            'auth': 'api-key',
+            'apiKey': f"${{{spec['env_var']}}}",
+            'models': spec['models'],
+        }
+        if providers.get(provider) != desired:
+            providers[provider] = desired
+            changed = True
+        for ref in spec['refs']:
+            if ref not in allowed_models:
+                allowed_models[ref] = {}
+                changed = True
+    if changed:
+        json_file.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+PYEOF
+    chown openclaw:openclaw "$OPENCLAW_HOME/.openclaw/openclaw.json" 2>/dev/null || true
+    chown openclaw-svc:openclaw-svc "$OPENCLAW_SVC_HOME/.openclaw/openclaw.json" 2>/dev/null || true
+    chmod 0600 "$OPENCLAW_HOME/.openclaw/openclaw.json" "$OPENCLAW_SVC_HOME/.openclaw/openclaw.json" 2>/dev/null || true
+    log "  Configured non-native provider runtime definitions refreshed from models.d."
 }
 
 ensure_dropin_line() {
@@ -370,6 +450,7 @@ mkdir -p "$OPENCLAW_SVC_HOME/.openclaw/workspace"
 if [ -d "$OPENCLAW_HOME/.openclaw" ]; then
     sync_openclaw_runtime_tree || true
     sync_service_auth_state
+    sync_configured_model_providers
     if [ -f "$OPENCLAW_HOME/.claude.json" ]; then
         install -m 0600 -o openclaw-svc -g openclaw-svc "$OPENCLAW_HOME/.claude.json" "$OPENCLAW_SVC_HOME/.claude.json"
     fi

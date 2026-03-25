@@ -149,7 +149,7 @@ class RuntimeSyncTests(unittest.TestCase):
             self.assertIn("/run/openclaw-codeshield/secrets.env", text)
             self.assertIn("defaults = cfg.setdefault('agents', {}).setdefault('defaults', {})", text)
             self.assertIn("allowed_models = defaults.setdefault('models', {})", text)
-            self.assertIn("if env_values.get(spec['env_var']) and any(ref in allowed_models for ref in spec['refs'])", text)
+            self.assertIn("if env_values.get(spec['env_var']):", text)
 
     def test_codeshield_config_refreshes_runtime_secrets_service(self) -> None:
         text = read_text(CONFIG_CLI)

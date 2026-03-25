@@ -9,7 +9,7 @@
 - CODE SHIELD secret migration/export paths preserve `DEEPSEEK_API_KEY`, helping managed runtimes keep non-native provider credentials visible after repairs or migrations.
 - `codeshield-config add-model` now refreshes `codeshield-secrets.service` after re-sealing secrets, so the live `openclaw-svc` runtime immediately sees newly added provider keys instead of stale tmpfs secrets.
 - Runtime sync now refreshes `auth.json`, `auth-profiles.json`, and `device-auth.json` into `openclaw-svc` when the interactive home copy is newer, preventing service-side model/provider state from sticking to stale Codex auth.
-- Runtime sync now rehydrates configured non-native providers from `/etc/openclaw-codeshield/models.d/*.conf`, or from an existing allowlist plus managed secrets when the `.conf` file is missing, back into both protected `openclaw.json` files. DeepSeek and GLM-5 runtime provider blocks now survive guardian repairs and service-side syncs even on partially migrated hosts.
+- Runtime sync now rehydrates configured non-native providers from `/etc/openclaw-codeshield/models.d/*.conf`, or directly from managed secrets when the `.conf` file is missing, back into both protected `openclaw.json` files. DeepSeek and GLM-5 runtime provider blocks now survive guardian repairs and service-side syncs even on partially migrated hosts.
 - Retrieval-protection wording was tightened so the assistant stops falsely claiming that Jarvis Memory, True Recall, or QMD are unavailable when the managed retrieval backend is enabled.
 - Retrieval wording now explicitly forbids placeholder plans when the user directly asks for a QMD or memory search. The assistant must attempt one live retrieval check first.
 

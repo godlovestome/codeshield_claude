@@ -191,7 +191,7 @@ for json_file in json_files:
     changed = False
     for provider, spec in provider_specs.items():
         if provider not in configured:
-            if env_values.get(spec['env_var']) and any(ref in allowed_models for ref in spec['refs']):
+            if env_values.get(spec['env_var']):
                 configured.add(provider)
             else:
                 continue

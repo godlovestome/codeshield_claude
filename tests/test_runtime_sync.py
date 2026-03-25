@@ -34,6 +34,7 @@ class RuntimeSyncTests(unittest.TestCase):
         self.assertIn('qmd-backend [enable|show|disable]', text)
         self.assertIn('/home/openclaw/scripts/qmd-openclaw-wrapper.sh', text)
         self.assertIn("memory['backend'] = 'qmd'", text)
+        self.assertIn("qmd['searchMode'] = qmd.get('searchMode') or 'search'", text)
         self.assertIn("qmd['limits'] = {'maxResults': 6, 'timeoutMs': 15000}", text)
         self.assertIn("print(f\"  timeoutMs: {limits.get('timeoutMs', '(default)')}\")", text)
 

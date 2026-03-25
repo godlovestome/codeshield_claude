@@ -82,7 +82,10 @@ class RuntimeSyncTests(unittest.TestCase):
         self.assertIn('CODESHIELD-SOUL-END', text)
         self.assertIn('Live Retrieval Verification', text)
         self.assertIn('QMD, memory search, or the knowledge base', text)
-        self.assertIn('do not answer from stale conversation context alone', text)
+        self.assertIn('current session context already contains live retrieval results', text)
+        self.assertIn('first perform one approved retrieval check', text)
+        self.assertIn('treat those as valid evidence and use them directly', text)
+        self.assertIn('Do not confuse "no explicit tool button" with "no retrieval evidence in the current turn."', text)
 
     def test_guardian_can_refresh_existing_soul_protection_block(self) -> None:
         text = read_text(GUARDIAN)

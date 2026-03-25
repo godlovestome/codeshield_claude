@@ -529,7 +529,7 @@ desired = {
     'baseUrl': base_url,
     'api': api_type,
     'auth': 'api-key',
-    'apiKey': env_var,
+    'apiKey': f'${{{env_var}}}',
     'models': models,
 }
 
@@ -689,7 +689,9 @@ update = qmd.get('update') if isinstance(qmd.get('update'), dict) else {}
 update['onBoot'] = False
 update['waitForBootSync'] = False
 qmd['update'] = update
-cfg.setdefault('agents', {}).setdefault('defaults', {})['workspace'] = workspace_path
+defaults = cfg.setdefault('agents', {}).setdefault('defaults', {})
+defaults['workspace'] = workspace_path
+defaults.setdefault('memorySearch', {})['enabled'] = True
 
 with open(path, 'w', encoding='utf-8') as f:
     json.dump(cfg, f, ensure_ascii=False, indent=2)

@@ -84,31 +84,40 @@ for item in src.rglob('*'):
 PYEOF
 }
 
-seed_service_auth_state_once() {
-    local rel existing=0
-    for rel in \
-        "agents/main/agent/auth.json" \
-        "agents/main/agent/auth-profiles.json" \
-        "identity/device-auth.json"; do
-        if [ -f "$OPENCLAW_SVC_HOME/.openclaw/$rel" ]; then
-            existing=1
-            break
-        fi
-    done
-    [ "$existing" -eq 1 ] && return 0
+sync_service_auth_state() {
+    python3 - "$OPENCLAW_HOME/.openclaw" "$OPENCLAW_SVC_HOME/.openclaw" <<'PYEOF'
+from pathlib import Path
+from shutil import copy2
+import sys
 
-    for rel in \
-        "agents/main/agent/auth.json" \
-        "agents/main/agent/auth-profiles.json" \
-        "identity/device-auth.json"; do
-        local src="$OPENCLAW_HOME/.openclaw/$rel"
-        local dst="$OPENCLAW_SVC_HOME/.openclaw/$rel"
-        if [ -f "$src" ] && [ ! -f "$dst" ]; then
-            mkdir -p "$(dirname "$dst")"
-            install -m 0600 -o openclaw-svc -g openclaw-svc "$src" "$dst"
-            log "  Seeded runtime auth state: $rel"
-        fi
-    done
+src = Path(sys.argv[1])
+dst = Path(sys.argv[2])
+tracked = [
+    Path('agents/main/agent/auth.json'),
+    Path('agents/main/agent/auth-profiles.json'),
+    Path('identity/device-auth.json'),
+]
+
+for rel in tracked:
+    source = src / rel
+    target = dst / rel
+    if not source.exists():
+        continue
+    if target.exists() and not (source.stat().st_mtime > target.stat().st_mtime):
+        continue
+    target.parent.mkdir(parents=True, exist_ok=True)
+    copy2(source, target)
+    print(rel, flush=True)
+PYEOF
+    chown openclaw-svc:openclaw-svc \
+        "$OPENCLAW_SVC_HOME/.openclaw/agents/main/agent/auth.json" \
+        "$OPENCLAW_SVC_HOME/.openclaw/agents/main/agent/auth-profiles.json" \
+        "$OPENCLAW_SVC_HOME/.openclaw/identity/device-auth.json" 2>/dev/null || true
+    chmod 0600 \
+        "$OPENCLAW_SVC_HOME/.openclaw/agents/main/agent/auth.json" \
+        "$OPENCLAW_SVC_HOME/.openclaw/agents/main/agent/auth-profiles.json" \
+        "$OPENCLAW_SVC_HOME/.openclaw/identity/device-auth.json" 2>/dev/null || true
+    log "  Runtime auth state refreshed from interactive home when newer."
 }
 
 ensure_dropin_line() {
@@ -360,7 +369,7 @@ mkdir -p "$OPENCLAW_SVC_HOME/.openclaw"
 mkdir -p "$OPENCLAW_SVC_HOME/.openclaw/workspace"
 if [ -d "$OPENCLAW_HOME/.openclaw" ]; then
     sync_openclaw_runtime_tree || true
-    seed_service_auth_state_once
+    sync_service_auth_state
     if [ -f "$OPENCLAW_HOME/.claude.json" ]; then
         install -m 0600 -o openclaw-svc -g openclaw-svc "$OPENCLAW_HOME/.claude.json" "$OPENCLAW_SVC_HOME/.claude.json"
     fi

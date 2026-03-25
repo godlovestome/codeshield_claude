@@ -36,13 +36,14 @@ class RuntimeSyncTests(unittest.TestCase):
         self.assertIn("memory['backend'] = 'qmd'", text)
         self.assertIn("qmd['searchMode'] = qmd.get('searchMode') or 'search'", text)
         self.assertIn("qmd['limits'] = {'maxResults': 6, 'timeoutMs': 15000}", text)
+        self.assertIn("defaults.setdefault('memorySearch', {})['enabled'] = True", text)
         self.assertIn("print(f\"  timeoutMs: {limits.get('timeoutMs', '(default)')}\")", text)
 
     def test_codeshield_config_writes_non_native_provider_models_config(self) -> None:
         text = read_text(CONFIG_CLI)
         self.assertIn('update_openclaw_model_provider_config()', text)
         self.assertIn("cfg.setdefault('models', {}).setdefault('providers', {})", text)
-        self.assertIn("'apiKey': env_var", text)
+        self.assertIn("'apiKey': f'${{{env_var}}}'", text)
         self.assertIn('update_openclaw_model_provider_config "$safename"', text)
         self.assertIn('update_openclaw_model_provider_config "$provider"', text)
         self.assertNotIn("cfg.setdefault('auth', {}).setdefault('providers', {})", text)
@@ -68,6 +69,16 @@ class RuntimeSyncTests(unittest.TestCase):
             self.assertNotIn('source "$SECRETS_FILE"', text)
             self.assertNotIn('source "$_secrets_src"', text)
             self.assertIn('read_env_file_value()', text)
+
+    def test_isolation_migrates_deepseek_secrets(self) -> None:
+        text = read_text(ISOLATION)
+        self.assertIn('("auth.deepseek.apiKey",              "DEEPSEEK_API_KEY")', text)
+        self.assertIn('("deepseekApiKey",                    "DEEPSEEK_API_KEY")', text)
+
+    def test_collect_secrets_exports_deepseek_key(self) -> None:
+        text = read_text(REPO_ROOT / 'lib' / '01-collect-secrets.sh')
+        self.assertIn("printf 'DEEPSEEK_API_KEY=%s\\n' \"${DEEPSEEK_API_KEY:-}\"", text)
+        self.assertIn('export ANTHROPIC_API_KEY DEEPSEEK_API_KEY GLM_API_KEY KIMI_API_KEY', text)
 
     def test_guardian_repairs_runtime_dropin_env_lines(self) -> None:
         text = read_text(GUARDIAN)

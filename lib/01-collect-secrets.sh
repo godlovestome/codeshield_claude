@@ -182,6 +182,7 @@ else
             printf 'OPENAI_ORG_ID=%s\n' "${OPENAI_ORG_ID:-}"
         fi
         printf 'ANTHROPIC_API_KEY=%s\n' "${ANTHROPIC_API_KEY:-}"
+        printf 'DEEPSEEK_API_KEY=%s\n' "${DEEPSEEK_API_KEY:-}"
         printf 'GLM_API_KEY=%s\n' "${GLM_API_KEY:-}"
         printf 'KIMI_API_KEY=%s\n' "${KIMI_API_KEY:-}"
         printf 'OPENCLAW_GATEWAY_TOKEN=%s\n' "$OPENCLAW_GATEWAY_TOKEN"
@@ -211,5 +212,5 @@ fi
 # Export for subsequent stages
 export TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID BRAVE_API_KEY OPENAI_API_KEY
 export OPENCLAW_GATEWAY_TOKEN QDRANT_API_KEY
-export ANTHROPIC_API_KEY GLM_API_KEY KIMI_API_KEY
+export ANTHROPIC_API_KEY DEEPSEEK_API_KEY GLM_API_KEY KIMI_API_KEY
 export OPENAI_CLIENT_ID OPENAI_CLIENT_SECRET OPENAI_ORG_ID 2>/dev/null || true

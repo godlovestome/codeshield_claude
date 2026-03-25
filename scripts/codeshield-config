@@ -47,6 +47,7 @@ declare -A OPENCLAW_JS_PATCH_PROVIDERS=(
 declare -A OPENCLAW_MODEL_REFS=(
     [deepseek]="deepseek/deepseek-chat deepseek/deepseek-reasoner"
     [glm5]="glm5/glm-4-flash glm5/glm-4-air"
+    [anthropic]="anthropic/claude-opus-4-6 anthropic/claude-sonnet-4-6"
 )
 
 ###############################################################################
@@ -433,6 +434,57 @@ PYEOF
     else
         warn "openclaw JS patching reported errors for '$provider'. Check output above."
     fi
+}
+
+###############################################################################
+# Write auth.profiles entry into openclaw.json for a provider
+# Maps MODEL_AUTH_TYPE (apikey/oauth/token) to the openclaw mode value.
+###############################################################################
+update_openclaw_auth_profile() {
+    local provider="$1"
+    local authtype="${2:-apikey}"
+
+    # Map codeshield auth type to openclaw auth.profiles mode
+    local mode
+    case "$authtype" in
+        apikey) mode="api_key" ;;
+        oauth)  mode="oauth"   ;;
+        token)  mode="token"   ;;
+        *)      mode="api_key" ;;
+    esac
+
+    local json_files=()
+    local candidate=""
+    while IFS= read -r candidate; do
+        [ -f "$candidate" ] && json_files+=("$candidate")
+    done < <(openclaw_json_paths)
+    if [ "${#json_files[@]}" -eq 0 ]; then
+        warn "openclaw.json not found. Skipping auth profile update for '$provider'."
+        return 0
+    fi
+
+    info "Writing auth.profiles for '$provider' (mode=$mode) ..."
+    python3 - "$provider" "$mode" "${json_files[@]}" << 'PYEOF'
+import sys, json
+
+provider = sys.argv[1]
+mode = sys.argv[2]
+json_files = sys.argv[3:]
+profile_key = f"{provider}:default"
+
+for json_file in json_files:
+    with open(json_file, encoding='utf-8') as f:
+        cfg = json.load(f)
+    profiles = cfg.setdefault('auth', {}).setdefault('profiles', {})
+    desired = {'provider': provider, 'mode': mode}
+    if profiles.get(profile_key) != desired:
+        profiles[profile_key] = desired
+        with open(json_file, 'w', encoding='utf-8') as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        print(f"  [{json_file}] auth profile '{profile_key}' written", flush=True)
+    else:
+        print(f"  [{json_file}] auth profile '{profile_key}' already up to date", flush=True)
+PYEOF
 }
 
 ###############################################################################
@@ -1234,6 +1286,9 @@ MEOF
 
     # Whitelist provider models in openclaw.json
     update_openclaw_model_whitelist "$safename"
+
+    # Write auth profile so openclaw recognises the provider credentials
+    update_openclaw_auth_profile "$openclaw_provider" "$authtype"
 
     reencrypt_secrets
     reload_squid

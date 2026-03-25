@@ -122,14 +122,14 @@ PYEOF
 }
 
 sync_configured_model_providers() {
-    [ -d "$MODELS_DIR" ] || return 0
-    python3 - "$MODELS_DIR" "$OPENCLAW_HOME/.openclaw/openclaw.json" "$OPENCLAW_SVC_HOME/.openclaw/openclaw.json" <<'PYEOF'
+    python3 - "$MODELS_DIR" "/run/openclaw-codeshield/secrets.env" "$SECRETS_FILE" "$OPENCLAW_HOME/.openclaw/openclaw.json" "$OPENCLAW_SVC_HOME/.openclaw/openclaw.json" <<'PYEOF'
 import json
 import sys
 from pathlib import Path
 
 models_dir = Path(sys.argv[1])
-json_files = [Path(p) for p in sys.argv[2:]]
+secret_files = [Path(sys.argv[2]), Path(sys.argv[3])]
+json_files = [Path(p) for p in sys.argv[4:]]
 
 provider_specs = {
     'deepseek': {
@@ -155,16 +155,30 @@ provider_specs = {
 }
 
 configured = set()
-for conf in sorted(models_dir.glob('*.conf')):
-    values = {}
-    for line in conf.read_text(encoding='utf-8', errors='replace').splitlines():
+if models_dir.is_dir():
+    for conf in sorted(models_dir.glob('*.conf')):
+        values = {}
+        for line in conf.read_text(encoding='utf-8', errors='replace').splitlines():
+            if not line or line.lstrip().startswith('#') or '=' not in line:
+                continue
+            key, value = line.split('=', 1)
+            values[key.strip()] = value.strip()
+        provider = values.get('MODEL_OPENCLAW_PROVIDER')
+        if provider in provider_specs:
+            configured.add(provider)
+
+env_values = {}
+for secret_file in secret_files:
+    if not secret_file.exists():
+        continue
+    for line in secret_file.read_text(encoding='utf-8', errors='replace').splitlines():
         if not line or line.lstrip().startswith('#') or '=' not in line:
             continue
         key, value = line.split('=', 1)
-        values[key.strip()] = value.strip()
-    provider = values.get('MODEL_OPENCLAW_PROVIDER')
-    if provider in provider_specs:
-        configured.add(provider)
+        key = key.strip()
+        value = value.strip()
+        if value:
+            env_values[key] = value
 
 for json_file in json_files:
     if not json_file.exists():
@@ -175,7 +189,12 @@ for json_file in json_files:
     defaults = cfg.setdefault('agents', {}).setdefault('defaults', {})
     allowed_models = defaults.setdefault('models', {})
     changed = False
-    for provider in configured:
+    for provider, spec in provider_specs.items():
+        if provider not in configured:
+            if env_values.get(spec['env_var']) and any(ref in allowed_models for ref in spec['refs']):
+                configured.add(provider)
+            else:
+                continue
         spec = provider_specs[provider]
         desired = {
             'baseUrl': spec['baseUrl'],

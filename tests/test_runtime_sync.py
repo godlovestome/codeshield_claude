@@ -86,6 +86,7 @@ class RuntimeSyncTests(unittest.TestCase):
         self.assertIn('first perform one approved retrieval check', text)
         self.assertIn('treat those as valid evidence and use them directly', text)
         self.assertIn('Do not confuse "no explicit tool button" with "no retrieval evidence in the current turn."', text)
+        self.assertIn('Do not claim that you lack Jarvis Memory, True Recall, QMD, or knowledge-base access', text)
 
     def test_guardian_can_refresh_existing_soul_protection_block(self) -> None:
         text = read_text(GUARDIAN)

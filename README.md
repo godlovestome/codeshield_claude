@@ -147,12 +147,23 @@ sudo /usr/local/sbin/openclaw-guardian
 sudo systemctl restart openclaw.service
 ```
 
+This refresh path now does two extra things that matter for Telegram reliability:
+
+- it refreshes `codeshield-secrets.service`, so newly added provider keys such as `DEEPSEEK_API_KEY` are visible to the live `openclaw-svc` runtime immediately
+- it refreshes the service-side auth files from the interactive OpenClaw home when those source files are newer, so the service does not stay pinned to stale Codex auth/model state
+
+这条刷新链路现在还会额外做两件和 Telegram 稳定性直接相关的事：
+
+- 刷新 `codeshield-secrets.service`，让新加入的 provider key（例如 `DEEPSEEK_API_KEY`）立刻对在线的 `openclaw-svc` 运行时可见
+- 当 interactive OpenClaw home 里的认证文件更新时，把它们刷新到 service 侧，避免 service 长时间停留在旧的 Codex auth / model state
+
 Validate after the refresh / 刷新后验证：
 
 ```bash
 sudo codeshield-config qmd-backend show
 grep -n "searchMode" /usr/local/sbin/codeshield-config
 grep -n "Do not claim that you lack Jarvis Memory, True Recall, QMD" /home/openclaw/.openclaw/SOUL.md
+systemctl status codeshield-secrets.service --no-pager
 ```
 
 Expected / 预期：

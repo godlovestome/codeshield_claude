@@ -98,6 +98,8 @@ class RuntimeSyncTests(unittest.TestCase):
         self.assertIn('treat those as valid evidence and use them directly', text)
         self.assertIn('Do not confuse "no explicit tool button" with "no retrieval evidence in the current turn."', text)
         self.assertIn('Do not claim that you lack Jarvis Memory, True Recall, QMD, or knowledge-base access', text)
+        self.assertIn('When the user explicitly asks you to search QMD', text)
+        self.assertIn('do not answer with a placeholder plan before attempting that retrieval check', text)
 
     def test_guardian_can_refresh_existing_soul_protection_block(self) -> None:
         text = read_text(GUARDIAN)
@@ -126,14 +128,21 @@ class RuntimeSyncTests(unittest.TestCase):
             text,
         )
 
-    def test_runtime_sync_preserves_service_auth_state(self) -> None:
+    def test_runtime_sync_refreshes_service_auth_state(self) -> None:
         for path in (ISOLATION, GUARDIAN):
             text = read_text(path)
             self.assertIn('sync_openclaw_runtime_tree()', text)
             self.assertIn('--exclude=agents/*/agent/auth.json', text)
             self.assertIn('--exclude=agents/*/agent/auth-profiles.json', text)
             self.assertIn('--exclude=identity/device-auth.json', text)
-            self.assertIn('seed_service_auth_state_once', text)
+            self.assertIn('sync_service_auth_state', text)
+            self.assertIn('source.stat().st_mtime > target.stat().st_mtime', text)
+
+    def test_codeshield_config_refreshes_runtime_secrets_service(self) -> None:
+        text = read_text(CONFIG_CLI)
+        self.assertIn('restart_codeshield_secrets()', text)
+        self.assertIn('systemctl restart codeshield-secrets.service', text)
+        self.assertIn('reencrypt_secrets', text)
 
     def test_install_fetches_proxy_preload_asset(self) -> None:
         text = read_text(INSTALL)

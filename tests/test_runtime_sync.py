@@ -138,6 +138,15 @@ class RuntimeSyncTests(unittest.TestCase):
             self.assertIn('sync_service_auth_state', text)
             self.assertIn('source.stat().st_mtime > target.stat().st_mtime', text)
 
+    def test_runtime_sync_rehydrates_configured_non_native_providers(self) -> None:
+        for path in (ISOLATION, GUARDIAN):
+            text = read_text(path)
+            self.assertIn('sync_configured_model_providers()', text)
+            self.assertIn("MODEL_OPENCLAW_PROVIDER", text)
+            self.assertIn("DEEPSEEK_API_KEY", text)
+            self.assertIn("deepseek/deepseek-chat", text)
+            self.assertIn("models.setdefault('providers', {})", text)
+
     def test_codeshield_config_refreshes_runtime_secrets_service(self) -> None:
         text = read_text(CONFIG_CLI)
         self.assertIn('restart_codeshield_secrets()', text)

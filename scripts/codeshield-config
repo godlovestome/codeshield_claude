@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CODE SHIELD V3.1.12 -- Configuration Management CLI
+# CODE SHIELD V3.2.0 -- Configuration Management CLI
 # Usage: codeshield-config <command> [args]
 #
 # Commands:
@@ -47,7 +47,15 @@ declare -A OPENCLAW_JS_PATCH_PROVIDERS=(
 declare -A OPENCLAW_MODEL_REFS=(
     [deepseek]="deepseek/deepseek-chat deepseek/deepseek-reasoner"
     [glm5]="glm5/glm-4-flash glm5/glm-4-air"
-    [anthropic]="anthropic/claude-opus-4-6 anthropic/claude-sonnet-4-6"
+    [minimax]="minimax/MiniMax-M2.7 minimax/MiniMax-M2.7-highspeed minimax/MiniMax-M2.5 minimax/MiniMax-M2.5-highspeed"
+)
+###############################################################################
+# Native provider config: providers supported natively by openclaw that still
+# need openclaw.json models.providers + agents.defaults.models entries.
+# Format: ENV_VAR|BASE_URL|API_TYPE|MODEL_IDS|MODEL_NAMES|REASONING_FLAGS
+###############################################################################
+declare -A OPENCLAW_NATIVE_PROVIDER_CONFIG=(
+    [minimax]="MINIMAX_API_KEY|https://api.minimaxi.com/anthropic|anthropic-messages|MiniMax-M2.7,MiniMax-M2.7-highspeed,MiniMax-M2.5,MiniMax-M2.5-highspeed|MiniMax M2.7,MiniMax M2.7 Highspeed,MiniMax M2.5,MiniMax M2.5 Highspeed|true,true,true,true"
 )
 
 ###############################################################################
@@ -437,57 +445,6 @@ PYEOF
 }
 
 ###############################################################################
-# Write auth.profiles entry into openclaw.json for a provider
-# Maps MODEL_AUTH_TYPE (apikey/oauth/token) to the openclaw mode value.
-###############################################################################
-update_openclaw_auth_profile() {
-    local provider="$1"
-    local authtype="${2:-apikey}"
-
-    # Map codeshield auth type to openclaw auth.profiles mode
-    local mode
-    case "$authtype" in
-        apikey) mode="api_key" ;;
-        oauth)  mode="oauth"   ;;
-        token)  mode="token"   ;;
-        *)      mode="api_key" ;;
-    esac
-
-    local json_files=()
-    local candidate=""
-    while IFS= read -r candidate; do
-        [ -f "$candidate" ] && json_files+=("$candidate")
-    done < <(openclaw_json_paths)
-    if [ "${#json_files[@]}" -eq 0 ]; then
-        warn "openclaw.json not found. Skipping auth profile update for '$provider'."
-        return 0
-    fi
-
-    info "Writing auth.profiles for '$provider' (mode=$mode) ..."
-    python3 - "$provider" "$mode" "${json_files[@]}" << 'PYEOF'
-import sys, json
-
-provider = sys.argv[1]
-mode = sys.argv[2]
-json_files = sys.argv[3:]
-profile_key = f"{provider}:default"
-
-for json_file in json_files:
-    with open(json_file, encoding='utf-8') as f:
-        cfg = json.load(f)
-    profiles = cfg.setdefault('auth', {}).setdefault('profiles', {})
-    desired = {'provider': provider, 'mode': mode}
-    if profiles.get(profile_key) != desired:
-        profiles[profile_key] = desired
-        with open(json_file, 'w', encoding='utf-8') as f:
-            json.dump(cfg, f, ensure_ascii=False, indent=2)
-        print(f"  [{json_file}] auth profile '{profile_key}' written", flush=True)
-    else:
-        print(f"  [{json_file}] auth profile '{profile_key}' already up to date", flush=True)
-PYEOF
-}
-
-###############################################################################
 # Whitelist provider models in openclaw.json (agents.defaults.models)
 ###############################################################################
 update_openclaw_model_whitelist() {
@@ -534,11 +491,16 @@ PYEOF
 }
 
 ###############################################################################
-# Write non-native provider definitions into openclaw.json (models.providers)
+# Write provider definitions into openclaw.json (models.providers)
+# Handles both non-native (OPENCLAW_JS_PATCH_PROVIDERS) and native providers
+# that need explicit config (OPENCLAW_NATIVE_PROVIDER_CONFIG).
 ###############################################################################
 update_openclaw_model_provider_config() {
     local provider="$1"
     local patch_data="${OPENCLAW_JS_PATCH_PROVIDERS[$provider]:-}"
+    if [ -z "$patch_data" ]; then
+        patch_data="${OPENCLAW_NATIVE_PROVIDER_CONFIG[$provider]:-}"
+    fi
     if [ -z "$patch_data" ]; then
         return 0
     fi
@@ -592,6 +554,8 @@ desired = {
     'apiKey': f'${{{env_var}}}',
     'models': models,
 }
+if api_type == 'anthropic-messages':
+    desired['authHeader'] = True
 
 for json_file in json_files:
     with open(json_file, encoding='utf-8') as f:
@@ -605,14 +569,24 @@ for json_file in json_files:
             auth_providers.pop(provider, None)
             if not auth_providers:
                 auth_cfg.pop('providers', None)
+    changed = False
     if current != desired:
         providers[provider] = desired
-        with open(json_file, 'w', encoding='utf-8') as f:
-            json.dump(cfg, f, ensure_ascii=False, indent=2)
-            f.write('\n')
+        changed = True
         print(f"  [{json_file}] models.providers.{provider} updated", flush=True)
     else:
         print(f"  [{json_file}] models.providers.{provider} already up to date", flush=True)
+    # Ensure auth profile exists
+    auth = cfg.setdefault('auth', {}).setdefault('profiles', {})
+    profile_key = f'{provider}:default'
+    if profile_key not in auth:
+        auth[profile_key] = {'provider': provider, 'mode': 'api_key'}
+        changed = True
+        print(f"  [{json_file}] auth.profiles.{profile_key} added", flush=True)
+    if changed:
+        with open(json_file, 'w', encoding='utf-8') as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+            f.write('\n')
 PYEOF
 
     local json_file=""
@@ -942,6 +916,338 @@ cmd_set() {
 }
 
 ###############################################################################
+# Discord-specific add-channel: Bot Token → query guilds → select channels
+# → configure allowlists → write openclaw.json channels.discord
+###############################################################################
+cmd_add_channel_discord() {
+    local name="Discord"
+    local domains="discord.com,cdn.discordapp.com,gateway.discord.gg"
+
+    printf "\n${BOLD}${CYAN}=== Discord Channel Setup ===${RESET}\n\n"
+
+    # ── Step 1: Bot token ────────────────────────────────────────────────
+    local token
+    token=$(read_secret "DISCORD_BOT_TOKEN")
+    if [ -n "$token" ]; then
+        printf "  ${BOLD}DISCORD_BOT_TOKEN${RESET} [current: %s] (Enter to keep): " "$(mask_secret "$token")" >/dev/tty
+        local new_token
+        read -r new_token </dev/tty
+        if [ -n "$new_token" ]; then
+            token="$new_token"
+            write_secret "DISCORD_BOT_TOKEN" "$token"
+            ok "Stored DISCORD_BOT_TOKEN"
+        fi
+    else
+        printf "  ${BOLD}DISCORD_BOT_TOKEN${RESET}: " >/dev/tty
+        read -r token </dev/tty
+        if [ -z "$token" ]; then
+            fail "Bot token is required."
+            exit 1
+        fi
+        write_secret "DISCORD_BOT_TOKEN" "$token"
+        ok "Stored DISCORD_BOT_TOKEN"
+    fi
+
+    # ── Step 2: Whitelist domains & channel conf ─────────────────────────
+    cat > "$CHANNELS_DIR/discord.conf" << CHEOF
+# CODE SHIELD -- Channel: Discord
+CHANNEL_NAME=Discord
+CHANNEL_DOMAINS=$domains
+CHANNEL_VARS=DISCORD_BOT_TOKEN
+CHEOF
+    chmod 0600 "$CHANNELS_DIR/discord.conf"
+    ok "Channel config written: $CHANNELS_DIR/discord.conf"
+
+    IFS=',' read -ra doms <<< "$domains"
+    for d in "${doms[@]}"; do
+        d=$(printf '%s' "$d" | tr -d ' ')
+        add_to_whitelist "$d"
+    done
+
+    # ── Step 3: Query Discord API for guilds ─────────────────────────────
+    printf "\n${CYAN}Fetching guilds from Discord API ...${RESET}\n" >/dev/tty
+
+    local guilds_json
+    guilds_json=$(curl -sS -H "Authorization: Bot $token" \
+        "https://discord.com/api/v10/users/@me/guilds" 2>/dev/null) || true
+
+    # Check for API error
+    if printf '%s' "$guilds_json" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if isinstance(d,list) else 1)" 2>/dev/null; then
+        :
+    else
+        warn "Failed to fetch guilds from Discord API."
+        warn "Possible reasons: invalid token, network/proxy blocked, or bot not in any guild."
+        printf "\n${YELLOW}Skipping interactive guild/channel selection.${RESET}\n" >/dev/tty
+        printf "${YELLOW}You can manually configure channels.discord in openclaw.json later.${RESET}\n" >/dev/tty
+
+        reencrypt_secrets
+        restart_codeshield_secrets
+        reload_squid
+        restart_openclaw
+        printf "\n${GREEN}Discord channel added (token-only mode).${RESET}\n"
+        return
+    fi
+
+    local guild_count
+    guild_count=$(printf '%s' "$guilds_json" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))")
+
+    if [ "$guild_count" -eq 0 ]; then
+        warn "Bot is not a member of any guild."
+        printf "${YELLOW}Invite the bot to a Discord server first, then re-run this command.${RESET}\n" >/dev/tty
+        reencrypt_secrets
+        restart_codeshield_secrets
+        reload_squid
+        restart_openclaw
+        printf "\n${GREEN}Discord channel added (token-only mode).${RESET}\n"
+        return
+    fi
+
+    # Display guild list
+    printf "\n${BOLD}Available Guilds:${RESET}\n" >/dev/tty
+    printf '%s' "$guilds_json" | python3 -c "
+import sys, json
+guilds = json.load(sys.stdin)
+for i, g in enumerate(guilds, 1):
+    print(f'  {i}) {g[\"name\"]}  (ID: {g[\"id\"]})')
+" >/dev/tty
+
+    printf "\n${BOLD}Select a guild${RESET} [1-%s]: " "$guild_count" >/dev/tty
+    local guild_choice
+    read -r guild_choice </dev/tty
+
+    local guild_id guild_name
+    read -r guild_id guild_name < <(printf '%s' "$guilds_json" | python3 -c "
+import sys, json
+guilds = json.load(sys.stdin)
+idx = int('${guild_choice}') - 1
+if 0 <= idx < len(guilds):
+    print(guilds[idx]['id'], guilds[idx]['name'])
+else:
+    print('', '')
+")
+
+    if [ -z "$guild_id" ]; then
+        fail "Invalid guild selection."
+        exit 1
+    fi
+    ok "Selected guild: $guild_name ($guild_id)"
+
+    # ── Step 4: Fetch text channels in selected guild ────────────────────
+    printf "\n${CYAN}Fetching channels for guild '$guild_name' ...${RESET}\n" >/dev/tty
+
+    local channels_json
+    channels_json=$(curl -sS -H "Authorization: Bot $token" \
+        "https://discord.com/api/v10/guilds/${guild_id}/channels" 2>/dev/null) || true
+
+    # Filter text channels (type 0) and announcement channels (type 5)
+    local text_channels
+    text_channels=$(printf '%s' "$channels_json" | python3 -c "
+import sys, json
+channels = json.load(sys.stdin)
+text = [c for c in channels if c.get('type') in (0, 5)]
+text.sort(key=lambda c: (c.get('parent_id') or '', c.get('position', 0)))
+json.dump(text, sys.stdout)
+" 2>/dev/null) || text_channels="[]"
+
+    local ch_count
+    ch_count=$(printf '%s' "$text_channels" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))")
+
+    if [ "$ch_count" -eq 0 ]; then
+        warn "No text channels found (bot may lack permissions)."
+        reencrypt_secrets
+        restart_codeshield_secrets
+        reload_squid
+        restart_openclaw
+        printf "\n${GREEN}Discord channel added (token-only mode).${RESET}\n"
+        return
+    fi
+
+    printf "\n${BOLD}Text Channels in '$guild_name':${RESET}\n" >/dev/tty
+    printf '%s' "$text_channels" | python3 -c "
+import sys, json
+channels = json.load(sys.stdin)
+for i, c in enumerate(channels, 1):
+    ctype = 'announcement' if c.get('type') == 5 else 'text'
+    print(f'  {i}) #{c[\"name\"]}  (ID: {c[\"id\"]}, {ctype})')
+" >/dev/tty
+
+    printf "\n${BOLD}Select channels to allow${RESET} (comma-separated, e.g. 1,3,5 or 'all'): " >/dev/tty
+    local ch_selection
+    read -r ch_selection </dev/tty
+
+    # Parse selection into channel IDs and names
+    local selected_channels
+    selected_channels=$(printf '%s' "$text_channels" | python3 -c "
+import sys, json
+channels = json.load(sys.stdin)
+sel = '${ch_selection}'.strip()
+result = []
+if sel.lower() == 'all':
+    result = channels
+else:
+    for s in sel.split(','):
+        s = s.strip()
+        if s.isdigit():
+            idx = int(s) - 1
+            if 0 <= idx < len(channels):
+                result.append(channels[idx])
+json.dump(result, sys.stdout)
+")
+
+    local sel_count
+    sel_count=$(printf '%s' "$selected_channels" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))")
+
+    if [ "$sel_count" -eq 0 ]; then
+        fail "No valid channels selected."
+        exit 1
+    fi
+
+    # ── Step 5: Group policy ─────────────────────────────────────────────
+    printf "\n${BOLD}Group policy for guild channels:${RESET}\n" >/dev/tty
+    printf "  ${BOLD}1${RESET}) allowlist  -- only selected channels respond (recommended)\n" >/dev/tty
+    printf "  ${BOLD}2${RESET}) open       -- respond in all channels where mentioned\n" >/dev/tty
+    printf "  ${BOLD}3${RESET}) disabled   -- block all guild channel messages\n" >/dev/tty
+    printf "\nChoice [1-3, default=1]: " >/dev/tty
+    local policy_choice
+    read -r policy_choice </dev/tty
+    local group_policy="allowlist"
+    case "$policy_choice" in
+        2) group_policy="open" ;;
+        3) group_policy="disabled" ;;
+        *) group_policy="allowlist" ;;
+    esac
+    ok "Group policy: $group_policy"
+
+    # ── Step 6: Require mention? ─────────────────────────────────────────
+    printf "\n${BOLD}Require @mention to trigger the bot?${RESET} [Y/n]: " >/dev/tty
+    local mention_choice
+    read -r mention_choice </dev/tty
+    local require_mention=true
+    case "$mention_choice" in
+        [nN]*) require_mention=false ;;
+        *) require_mention=true ;;
+    esac
+
+    # ── Step 7: DM policy ────────────────────────────────────────────────
+    printf "\n${BOLD}Direct message policy:${RESET}\n" >/dev/tty
+    printf "  ${BOLD}1${RESET}) pairing    -- pair DM sender with their guild identity (default)\n" >/dev/tty
+    printf "  ${BOLD}2${RESET}) open       -- allow DMs from anyone\n" >/dev/tty
+    printf "  ${BOLD}3${RESET}) allowlist  -- only allow DMs from specified users\n" >/dev/tty
+    printf "  ${BOLD}4${RESET}) disabled   -- ignore all DMs\n" >/dev/tty
+    printf "\nChoice [1-4, default=1]: " >/dev/tty
+    local dm_choice
+    read -r dm_choice </dev/tty
+    local dm_policy="pairing"
+    case "$dm_choice" in
+        2) dm_policy="open" ;;
+        3) dm_policy="allowlist" ;;
+        4) dm_policy="disabled" ;;
+        *) dm_policy="pairing" ;;
+    esac
+
+    # ── Step 8: Write channels.discord into openclaw.json ────────────────
+    printf "\n${CYAN}Writing channels.discord config to openclaw.json ...${RESET}\n" >/dev/tty
+
+    local json_files=()
+    while IFS= read -r jp; do
+        json_files+=("$jp")
+    done < <(openclaw_json_paths)
+
+    if [ ${#json_files[@]} -eq 0 ]; then
+        warn "openclaw.json not found. Skipping channel config write."
+    else
+        for json_file in "${json_files[@]}"; do
+            if [ ! -f "$json_file" ]; then
+                info "Skipping $json_file (not found)"
+                continue
+            fi
+
+            python3 - "$json_file" "$guild_id" "$guild_name" "$group_policy" "$require_mention" "$dm_policy" "$selected_channels" << 'PYEOF'
+import sys, json, os
+
+json_file = sys.argv[1]
+guild_id = sys.argv[2]
+guild_name = sys.argv[3]
+group_policy = sys.argv[4]
+require_mention = sys.argv[5] == "true"
+dm_policy = sys.argv[6]
+selected_channels = json.loads(sys.argv[7])
+
+with open(json_file, 'r') as f:
+    config = json.load(f)
+
+# Build per-channel config
+channels_cfg = {}
+for ch in selected_channels:
+    channels_cfg[ch["id"]] = {
+        "allow": True,
+        "requireMention": require_mention
+    }
+
+# Build guild entry
+guild_entry = {
+    "slug": guild_name.lower().replace(" ", "-"),
+    "requireMention": require_mention,
+    "channels": channels_cfg
+}
+
+# Build discord config
+discord_cfg = config.get("channels", {}).get("discord", {})
+discord_cfg["groupPolicy"] = group_policy
+discord_cfg["dmPolicy"] = dm_policy
+
+# Merge guilds (preserve existing guilds, update/add selected one)
+guilds = discord_cfg.get("guilds", {})
+guilds[guild_id] = guild_entry
+discord_cfg["guilds"] = guilds
+
+# Token is read from DISCORD_BOT_TOKEN env var (injected via EnvironmentFile)
+# Do NOT set discord_cfg["token"] — openclaw reads env vars directly
+discord_cfg.pop("token", None)  # remove stale token if present
+
+# Write back
+if "channels" not in config:
+    config["channels"] = {}
+config["channels"]["discord"] = discord_cfg
+
+with open(json_file, 'w') as f:
+    json.dump(config, f, indent=2, ensure_ascii=False)
+    f.write('\n')
+
+print(f"  [{json_file}] channels.discord updated", flush=True)
+PYEOF
+
+            local owner="openclaw"
+            [ "$json_file" = "/var/lib/openclaw-svc/.openclaw/openclaw.json" ] && owner="openclaw-svc"
+            chown "${owner}:${owner}" "$json_file" 2>/dev/null || true
+            chmod 0600 "$json_file" 2>/dev/null || true
+        done
+    fi
+
+    # ── Step 9: Summary ──────────────────────────────────────────────────
+    printf "\n${BOLD}${CYAN}=== Discord Configuration Summary ===${RESET}\n" >/dev/tty
+    printf "  Bot Token:       %s\n" "$(mask_secret "$token")" >/dev/tty
+    printf "  Guild:           %s (%s)\n" "$guild_name" "$guild_id" >/dev/tty
+    printf "  Group Policy:    %s\n" "$group_policy" >/dev/tty
+    printf "  Require Mention: %s\n" "$require_mention" >/dev/tty
+    printf "  DM Policy:       %s\n" "$dm_policy" >/dev/tty
+    printf "  Channels:        " >/dev/tty
+    printf '%s' "$selected_channels" | python3 -c "
+import sys, json
+chs = json.load(sys.stdin)
+print(', '.join(f'#{c[\"name\"]}' for c in chs))
+" >/dev/tty
+    printf "  Proxy Whitelist: %s\n" "$domains" >/dev/tty
+
+    reencrypt_secrets
+    restart_codeshield_secrets
+    reload_squid
+    restart_openclaw
+
+    printf "\n${GREEN}Discord channel setup completed successfully.${RESET}\n"
+}
+
+###############################################################################
 # Command: add-channel
 ###############################################################################
 cmd_add_channel() {
@@ -951,28 +1257,32 @@ cmd_add_channel() {
 
     # Built-in channel definitions
     declare -A BUILTIN_CH_NAMES=(
+        [telegram]="Telegram"
         [wecom]="企业微信 (WeCom)"
         [feishu]="飞书 (Feishu)"
         [discord]="Discord"
     )
     declare -A BUILTIN_CH_DOMAINS=(
+        [telegram]="api.telegram.org"
         [wecom]="qyapi.weixin.qq.com"
         [feishu]="open.feishu.cn"
-        [discord]="discord.com,cdn.discordapp.com"
+        [discord]="discord.com,cdn.discordapp.com,gateway.discord.gg"
     )
     declare -A BUILTIN_CH_VARS=(
+        [telegram]="TELEGRAM_BOT_TOKEN,TELEGRAM_CHAT_ID"
         [wecom]="WECOM_CORP_ID,WECOM_AGENT_ID,WECOM_SECRET"
         [feishu]="FEISHU_APP_ID,FEISHU_APP_SECRET"
-        [discord]="DISCORD_BOT_TOKEN,DISCORD_WEBHOOK_URL"
+        [discord]="DISCORD_BOT_TOKEN"
     )
 
     printf "\n${BOLD}${CYAN}=== Add New Channel / 添加通道 ===${RESET}\n\n"
     printf "Select a channel type:\n"
-    printf "  ${BOLD}1${RESET}) 企业微信 (WeCom)\n"
-    printf "  ${BOLD}2${RESET}) 飞书 (Feishu)\n"
-    printf "  ${BOLD}3${RESET}) Discord\n"
-    printf "  ${BOLD}4${RESET}) Custom (自定义)\n"
-    printf "\nChoice [1-4]: " >/dev/tty
+    printf "  ${BOLD}1${RESET}) Telegram\n"
+    printf "  ${BOLD}2${RESET}) 企业微信 (WeCom)\n"
+    printf "  ${BOLD}3${RESET}) 飞书 (Feishu)\n"
+    printf "  ${BOLD}4${RESET}) Discord\n"
+    printf "  ${BOLD}5${RESET}) Custom (自定义)\n"
+    printf "\nChoice [1-5]: " >/dev/tty
     local ch_choice
     read -r ch_choice </dev/tty
 
@@ -980,10 +1290,11 @@ cmd_add_channel() {
     local channel_key=""
 
     case "$ch_choice" in
-        1) channel_key="wecom" ;;
-        2) channel_key="feishu" ;;
-        3) channel_key="discord" ;;
-        4) channel_key="custom" ;;
+        1) channel_key="telegram" ;;
+        2) channel_key="wecom" ;;
+        3) channel_key="feishu" ;;
+        4) cmd_add_channel_discord; return ;;
+        5) channel_key="custom" ;;
         *) fail "Invalid choice."; exit 1 ;;
     esac
 
@@ -1286,9 +1597,6 @@ MEOF
 
     # Whitelist provider models in openclaw.json
     update_openclaw_model_whitelist "$safename"
-
-    # Write auth profile so openclaw recognises the provider credentials
-    update_openclaw_auth_profile "$openclaw_provider" "$authtype"
 
     reencrypt_secrets
     reload_squid

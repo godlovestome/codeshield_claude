@@ -83,8 +83,8 @@
     },
     {
       "name": "minimax-chat",
-      "description": "Chat completions via MiniMax API",
-      "allowed_endpoints": ["api.minimax.io"],
+      "description": "Chat completions via MiniMax API (China: minimaxi.com)",
+      "allowed_endpoints": ["api.minimax.io", "api.minimaxi.com"],
       "max_calls_per_hour": 120
     },
     {
@@ -103,7 +103,6 @@
     }
   ],
   "blocked_actions": [
-    "shell-exec",
     "file-write-system",
     "file-read-system",
     "network-raw",

@@ -1,5 +1,25 @@
 # Changelog
 
+## [3.2.0] - 2026-03-27
+
+### Added / Changed
+
+1. **Discord concurrency config / Discord并发配置** -- Discord channel now defaults to `maxConcurrent: 4` and `subagents: 12`, preventing message-storm lockups on busy servers.
+2. **MiniMax China API restoration / MiniMax中国版API恢复** -- Restored MiniMax China endpoint (`api.minimaxi.com`) with `OPENCLAW_NATIVE_PROVIDER_CONFIG` support. Models: MiniMax-M2.5, MiniMax-M2.5-highspeed, MiniMax-M2.7, MiniMax-M2.7-highspeed. Uses `anthropic-messages` API type with `authHeader: True`.
+3. **QMD retrieval failure fix / QMD检索失败修复** -- Fixed QMD retrieval scope to `allow` and updated TOOLS.md so the assistant no longer falsely claims retrieval is unavailable.
+4. **exec-approval globally disabled / exec-approval全局关闭** -- Set `tools.exec.ask: "off"` with a three-layer enforcement approach. Removed `shell-exec` from `blocked_actions` in skills-policy.json to support exec functionality.
+5. **Discord interactive channel setup / Discord add-channel交互式配置** -- New `cmd_add_channel_discord()` function (~332 lines) provides full interactive Discord setup: queries Discord API for guilds/channels, configures per-channel allowlists, group policy, DM policy, and mention requirements. Telegram added as built-in channel choice 1.
+6. **add-model flow improvements / add-model配置流程改进** -- Added `OPENCLAW_NATIVE_PROVIDER_CONFIG` associative array for providers natively supported by OpenClaw that still need explicit config entries. Auth profile writing is now inlined into `update_openclaw_model_provider_config()` instead of using a separate function. Added `gateway.discord.gg` to Discord domains.
+
+### 中文说明
+
+1. **Discord并发配置** -- Discord 通道现在默认 `maxConcurrent: 4`、`subagents: 12`，防止繁忙服务器上的消息风暴导致锁死。
+2. **MiniMax中国版API恢复** -- 恢复了 MiniMax 中国端点（`api.minimaxi.com`），增加 `OPENCLAW_NATIVE_PROVIDER_CONFIG` 支持。模型包括 MiniMax-M2.5、MiniMax-M2.5-highspeed、MiniMax-M2.7、MiniMax-M2.7-highspeed，使用 `anthropic-messages` API 类型并带 `authHeader: True`。
+3. **QMD检索失败修复** -- 修复了 QMD 检索作用域为 `allow`，更新 TOOLS.md，使助手不再错误声称检索不可用。
+4. **exec-approval全局关闭** -- 设置 `tools.exec.ask: "off"`，采用三层执行策略。从 skills-policy.json 的 `blocked_actions` 中移除了 `shell-exec`，以支持 exec 功能。
+5. **Discord add-channel交互式配置** -- 新增 `cmd_add_channel_discord()` 函数（约332行），提供完整的 Discord 交互式配置：查询 Discord API 获取服务器/频道列表，配置频道级白名单、群组策略、DM 策略和 @提及要求。Telegram 已作为内建通道选项 1。
+6. **add-model配置流程改进** -- 新增 `OPENCLAW_NATIVE_PROVIDER_CONFIG` 关联数组，用于原生支持但仍需显式配置项的 provider。auth profile 写入已内联到 `update_openclaw_model_provider_config()` 中，不再使用独立函数。Discord 域名增加了 `gateway.discord.gg`。
+
 ## [Unreleased]
 
 ### Added / Changed
